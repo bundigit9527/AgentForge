@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=77,<85"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentforge-platform"
+version = "0.1.0"
+description = "AgentForge 智构 — modular Python backend for enterprise agents"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = [
+    "fastapi>=0.115,<1",
+    "pydantic>=2.10,<3",
+    "sqlalchemy>=2.0,<2.1",
+    "alembic>=1.14,<2",
+    "psycopg[binary]>=3.2,<4",
+    "uvicorn>=0.34,<1",
+]
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "httpx>=0.28,<1", "ruff>=0.11,<1"]
+
+[project.scripts]
+agentforge-worker = "agentforge_worker.main:main"
+
+[tool.setuptools]
+packages = [
+    "agentforge_api", "agentforge_worker", "agentforge_core",
+    "agentforge_contracts", "agentforge_storage", "agentforge_runtime",
+]
+
+[tool.setuptools.package-dir]
+agentforge_api = "apps/api/agentforge_api"
+agentforge_worker = "apps/worker/agentforge_worker"
+agentforge_core = "packages/core/agentforge_core"
+agentforge_contracts = "packages/contracts/agentforge_contracts"
+agentforge_storage = "packages/storage/agentforge_storage"
+agentforge_runtime = "packages/runtime/agentforge_runtime"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
