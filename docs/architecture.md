@@ -1,6 +1,6 @@
 # AgentForge 项目架构
 
-状态：整体目标架构；已建立 Python 离线任务骨架。更新日期：2026-10-28。
+状态：整体目标架构；已建立 Python 离线任务骨架。更新日期：2026-10-29。
 
 本文记录 AgentForge 的技术边界、模块职责和运行约束。README 提供项目概览；后续实现与接口设计以本文为架构基线，实施顺序见 [开发路线图](roadmap.md)。
 
@@ -22,14 +22,14 @@
 
 当前已有 Python API、单次 / 持续运行 Worker、模拟 Harness、任务与事件存储及离线测试。已实现按身份范围隔离的提交去重、SSE 实时事件续传和后台租约续期。框架采用 FastAPI，数据访问和迁移采用 SQLAlchemy / Alembic；任务表兼任持久化队列。具体范围见 [开发入门](development.md) 和 [任务执行协议](task-execution.md)。
 
-已提供仅包含 PostgreSQL 的本地开发 Compose 配置。完整企业认证、真实模型、记忆、Supervisor、前端及应用部署文件仍未实现。下面的架构图描述整体目标，不能视为所有模块已经可运行；本轮只验证 SQLite 和 Compose 配置，PostgreSQL 仍需实际启动后验证。
+已提供仅包含 PostgreSQL 的本地开发 Compose 配置。完整企业认证、真实模型、记忆、Supervisor、前端及应用部署文件仍未实现。下面的架构图描述整体目标，不能视为所有模块已经可运行；已有 SQLite 离线验证及 PostgreSQL 17.11 独立集成验证，生产容量、真实模型与外部业务仍需另外验收。
 
 ## 2. 业务架构
 
 ```mermaid
 flowchart TB
     K["知识库：产品资料、业务知识、制度与经验"]
-    W["工作流：投研、内容生产、产品设计、客户管理"]
+    W["工作流：研发、内容生产、产品设计、客户管理"]
     A["Agent：承担角色和任务"]
     S["Skill：可复用的业务操作"]
     E["执行标准：输入输出、权限、质量与验收规则"]
@@ -53,11 +53,11 @@ flowchart TB
     WORKER --> PG
     HARNESS --> MEMORY["记忆与知识检索模块"]
     MEMORY --> PG
-    MEMORY --> KNOWLEDGE["产品管理系统 / 知识库 / 向量检索"]
+    MEMORY --> KNOWLEDGE["资料库 / 知识库 / 向量检索"]
     HARNESS --> MODEL["企业大模型路由"]
     HARNESS --> TOOLS["工具执行模块：权限、审批与幂等控制"]
     TOOLS --> CONNECTOR["企业业务连接器"]
-    CONNECTOR --> ASSETS["智能体广场 / Skill 广场 / 业务 API"]
+    CONNECTOR --> ASSETS["智能体HUB / Skill HUB / 业务 API"]
     TOOLS --> SUPERVISOR["Python Supervisor"]
     SUPERVISOR --> SB1["独立 Computer 沙箱 A"]
     SUPERVISOR --> SB2["独立 Computer 沙箱 B"]
@@ -99,7 +99,7 @@ flowchart LR
     WORKER_DEV -->|127.0.0.1:55432| PG_DEV
 ```
 
-开发配置见 [compose.dev.yaml](../infra/compose/compose.dev.yaml)。macOS 上通过 Colima 的 Docker 运行时运行 PostgreSQL，开发命令显式选择 `colima` 上下文；API 与 Worker 保持本机调试。当前没有启动这些组件。自动化离线测试仍使用临时 SQLite 文件，不依赖 Docker。
+开发配置见 [compose.dev.yaml](../infra/compose/compose.dev.yaml)。macOS 上通过 Colima 的 Docker 运行时运行 PostgreSQL，开发命令显式选择 `colima` 上下文；API 与 Worker 保持本机调试。自动化离线测试仍使用临时 SQLite 文件，不依赖 Docker；显式 PostgreSQL 测试使用独立的临时测试容器和每用例 schema，见 [集成测试说明](postgresql-testing.md)。
 
 ### 后续 Ubuntu 服务器部署
 
@@ -309,7 +309,7 @@ Rakazo 提供产品形态、运行链路和界面交互参考。现有 Pi 是 Ja
 | FastAPI 企业认证与协议适配 | 现有开发认证仅映射固定身份，已提供 SSE 任务事件；待验证企业登录、前端适配与 WebSocket 代理 |
 | 数据库队列的生产调度 | 已有领取、续租、取消和持续消费；待验证 PostgreSQL 并发、真实长任务和容量 |
 | Python Agent 运行时 | 初版为模拟模型和一个内置工具；待接入真实模型路由、工具循环、审批和用量统计 |
-| SQLAlchemy / Alembic 的生产验证 | 初版已通过 SQLite 迁移；待验证 PostgreSQL 事务、权限及升级流程 |
+| SQLAlchemy / Alembic 的生产验证 | 已通过 SQLite 与 PostgreSQL 测试库的迁移、事务及应用层隔离验证；生产账号权限、备份恢复及升级流程仍待验证 |
 | 语义记忆与知识接入 | 既有向量库接口、权限过滤、删除同步和召回质量 |
 | 前端复用方式 | 旧接口兼容层与前端数据层改造的实际成本 |
 | 服务器资源配置 | 实际 Ubuntu 版本、CPU 架构、内存、磁盘、网络及并发任务样本 |

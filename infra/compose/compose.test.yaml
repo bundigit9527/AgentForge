@@ -1,0 +1,22 @@
+name: agentforge-test
+
+services:
+  postgres:
+    image: postgres:17.11-bookworm
+    restart: "no"
+    environment:
+      POSTGRES_DB: agentforge_test
+      POSTGRES_USER: agentforge_test
+      # Local disposable test credentials, not for development or production data.
+      POSTGRES_PASSWORD: agentforge_test_only
+    ports:
+      - "127.0.0.1:${AGENTFORGE_TEST_POSTGRES_PORT:-55433}:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agentforge_test -d agentforge_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    stop_grace_period: 30s

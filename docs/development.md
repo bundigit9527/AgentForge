@@ -54,6 +54,8 @@ uv run --locked --offline pytest
 
 测试覆盖：任务提交去重与结果持久化、事件流与续传、取消、租户/空间/用户访问范围、重复领取、执行租约续期与失效、持续消费、重试上限、迁移保留已有数据，以及任务状态与事件的事务一致性。SQLite 验证不代表 PostgreSQL 或生产环境验证已经完成。
 
+已提供显式启用的 PostgreSQL 集成测试模式，复用上述行为测试，并增加独立连接和并发验证。它只读取 `AGENTFORGE_TEST_DATABASE_URL`，要求专用测试库，每个数据库用例使用独立临时 schema；默认测试命令仍为 SQLite。配置与操作步骤见 [PostgreSQL 集成测试](postgresql-testing.md)。
+
 ## 代码从哪里看
 
 | 路径 | 当前内容 |
@@ -96,13 +98,13 @@ uv run --locked --offline pytest
 - 取消阻止后续状态写入；正在计算的同步模拟函数不会被强制杀死。未来沙箱进程和模型请求需要独立的取消适配。
 - 结果作为文本保存在数据库中；文件产物、知识库和长期记忆尚未实现。
 
-生产目标仍为 PostgreSQL。已声明 PostgreSQL 驱动和迁移代码，但本轮仅运行 SQLite 离线测试；需在独立 PostgreSQL 测试环境验证迁移、并发、权限与恢复后再用于业务。
+生产目标仍为 PostgreSQL。已声明 PostgreSQL 驱动和迁移代码，并已在独立 PostgreSQL 17.11 测试库验证迁移、并发、应用层隔离与租约恢复。生产账号权限、网络服务联调、容量与备份恢复仍需单独验证。
 
 ## 本地 PostgreSQL 开发容器
 
 当前开发方式为“本机 Python API / Worker + Colima 中的 PostgreSQL 容器”。[compose.dev.yaml](../infra/compose/compose.dev.yaml) 只包含数据库，使用 `postgres:17.11-bookworm`，绑定 `127.0.0.1:55432`，数据库为 `agentforge_dev`，开发账号为 `agentforge`。数据库数据保存在 Colima Docker 环境中的独立卷中。
 
-以下命令供后续手动联调时执行，本次只创建并静态检查配置。先从仓库根目录准备 `.env`；如果文件已存在，保留原配置并手动合并本地数据库字段：
+以下命令用于手动开发联调；自动化集成测试使用另一套独立配置。先从仓库根目录准备 `.env`；如果文件已存在，保留原配置并手动合并本地数据库字段：
 
 ```bash
 cp -n .env.example .env
@@ -124,7 +126,7 @@ uv run --env-file .env --locked alembic upgrade head
 docker --context colima compose --env-file .env -f infra/compose/compose.dev.yaml down
 ```
 
-此处不使用删除卷的选项。当前尚未启动本地数据库或执行 PostgreSQL 迁移、集成测试；自动化测试仍固定使用临时 SQLite。完整参数见 [开发数据库说明](../infra/compose/README.md)；镜像初始化与卷规则参考 [PostgreSQL 官方镜像](https://hub.docker.com/_/postgres)。
+此处不使用删除卷的选项。默认自动化测试使用临时 SQLite，显式 PostgreSQL 模式已通过独立测试容器验证，不会使用这里的开发数据库。完整参数见 [开发数据库说明](../infra/compose/README.md)；镜像初始化与卷规则参考 [PostgreSQL 官方镜像](https://hub.docker.com/_/postgres)。
 
 ## 后续接入已有的外部 PostgreSQL
 
@@ -144,7 +146,7 @@ API、Worker 和迁移工具应指向同一目标数据库。容器中的 `local
 - 是否为 AgentForge 专用开发/测试库，以及可进行的迁移操作。
 - 连接账号、TLS/证书要求，以及当前电脑和 Ubuntu 服务器的网络可达性。
 
-初次接入优先使用已有实例上的 AgentForge 专用开发/测试库与账号。当前迁移使用连接的默认 schema，会创建 `runs`、`run_events` 和 `alembic_version`；共享业务库下的独立 schema 尚未配置，需明确 schema 与权限后再适配。现有离线测试固定使用临时 SQLite，不会把环境变量中的外部数据库用作测试库，也不会对它执行测试里的降级操作。
+初次接入优先使用已有实例上的 AgentForge 专用开发/测试库与账号。当前迁移使用连接的默认 schema，会创建 `runs`、`run_events` 和 `alembic_version`；共享业务库下的独立 schema 尚未配置，需明确 schema 与权限后再适配。默认离线测试使用临时 SQLite；显式集成测试只读取独立测试连接变量，并把迁移及降级限定在每用例临时 schema，不能使用业务库运行。
 
 数据库信息确认后，先检查连通性、版本及当前结构，再在指定开发/测试库执行 `uv run --locked alembic upgrade head`。该命令会修改数据库结构；应用启动和创建项目本身均不会自动执行它。不要将现有测试直接改为对共享业务库运行。
 

@@ -65,4 +65,4 @@ uv run --env-file .env --locked agentforge-worker --watch
 uv run --env-file .env --locked alembic upgrade head
 ```
 
-`/health/ready` 会检查数据库迁移版本，旧结构返回 503。新增能力已通过 SQLite 离线行为测试，PostgreSQL 迁移 SQL 已离线生成；尚未启动 PostgreSQL 容器、连接外部数据库或执行真实数据库迁移。本次只写入代码与文档，没有启动 Worker 常驻进程。
+`/health/ready` 会检查数据库迁移版本，旧结构返回 503。任务行为及迁移已通过 SQLite 离线测试与独立 PostgreSQL 17.11 集成测试；测试使用临时 schema，不连接外部业务库。Worker 在测试进程中执行，常驻进程及真实模型联调仍需单独验收。步骤见 [PostgreSQL 集成测试](postgresql-testing.md)。

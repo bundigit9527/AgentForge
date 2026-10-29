@@ -1,5 +1,7 @@
 # 开发环境 PostgreSQL
 
+自动化集成测试另用 [compose.test.yaml](compose.test.yaml)，默认端口 `55433`、独立测试库和临时存储，不复用下文开发数据卷。完整步骤见 [PostgreSQL 集成测试](../../docs/postgresql-testing.md)。
+
 [compose.dev.yaml](compose.dev.yaml) 仅定义本地开发数据库。API 与 Worker 在本机 Python 环境运行；应用服务和 Computer 工具沙箱的 Compose 配置仍待实现。
 
 macOS 开发使用 Colima 的 Docker 运行时。先运行 `colima status`；若尚未运行，需要联调时手动执行 `colima start --runtime docker`。随后用 `docker --context colima version` 确认 Docker 服务可访问。下列命令均显式选择 `colima` 上下文。
@@ -39,6 +41,6 @@ docker --context colima compose --env-file .env -f infra/compose/compose.dev.yam
 
 数据卷位于当前 Colima Docker 环境中；切换到其他 Docker 环境不会自动带上该数据卷。这里的 `--context colima` 用于 macOS 开发，Ubuntu 服务器使用其本机 Docker Engine。
 
-当前配置只完成静态校验，尚未拉取镜像、启动容器或运行 PostgreSQL 集成测试。后续服务器部署可接入已有外部 PostgreSQL，详见 [开发入门](../../docs/development.md)。
+本页开发配置完成了静态校验；独立的 `compose.test.yaml` 已实际启动 PostgreSQL 17.11 并通过集成测试，测试容器随后停止清理。开发库和常驻应用服务仍按需要手动联调。后续服务器部署可接入已有外部 PostgreSQL，详见 [开发入门](../../docs/development.md)。
 
 镜像版本、初始化参数及数据卷规则参考 [PostgreSQL 官方镜像](https://hub.docker.com/_/postgres)。

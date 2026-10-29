@@ -189,6 +189,7 @@ cython_debug/
 # AgentForge local configuration and development databases
 .env.*
 !.env.example
+!.env.test.example
 *.db
 *.db-journal
 *.db-wal

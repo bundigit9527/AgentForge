@@ -4,7 +4,7 @@
 
 AgentForge 致力于连接企业知识、业务工作流、Agent 和 Skill，让智能体在受控环境中完成业务任务。项目采用模块化设计，支持逐步接入已有系统，并以 Python 统一后端开发。
 
-> 当前阶段：Python 后端初始实现。已有 API、Worker、模拟 Harness、任务持久化和离线测试；下方完整架构仍为建设目标，尚未提供完整平台或生产安装包。
+> 当前阶段：Python 后端初始实现。已有 API、Worker、模拟 Harness、任务持久化和 SQLite / PostgreSQL 测试；下方完整架构仍为建设目标，尚未提供完整平台或生产安装包。
 
 ## 文档导航
 
@@ -12,6 +12,7 @@ AgentForge 致力于连接企业知识、业务工作流、Agent 和 Skill，让
 - [开发路线图](docs/roadmap.md)：实施阶段、验收条件和首个业务闭环。
 - [开发入门](docs/development.md)：安装依赖、离线测试、当前接口及实现边界。
 - [任务执行协议](docs/task-execution.md)：提交去重、实时进度、断线续传和 Worker 运行方式。
+- [PostgreSQL 集成测试](docs/postgresql-testing.md)：独立测试库、临时 schema 隔离与可重复的验证步骤。
 
 ## 当前可验证的闭环
 
@@ -19,9 +20,9 @@ AgentForge 致力于连接企业知识、业务工作流、Agent 和 Skill，让
 
 已支持带 `Idempotency-Key` 的重复提交保护、SSE 实时进度与断线续传，以及 Worker 持续消费和租约续期。任务取消或执行失去租约后，旧执行不能写回最终结果。
 
-初版采用 Python 3.12、FastAPI、SQLAlchemy 和 Alembic。测试使用临时 SQLite 数据库和进程内 HTTP 客户端，不启动网络服务、容器或真实模型。生产数据库目标仍为 PostgreSQL，尚待独立环境验证。
+初版采用 Python 3.12、FastAPI、SQLAlchemy 和 Alembic。默认测试使用临时 SQLite 数据库和进程内 HTTP 客户端，不启动网络服务、容器或真实模型。另提供独立 PostgreSQL 集成测试，已在 PostgreSQL 17.11 上通过验证；生产部署与真实业务仍需单独验收。
 
-macOS 开发联调采用 Colima 的 Docker 运行时承载本地 PostgreSQL，API 与 Worker 在本机运行。已提供 [开发数据库配置](infra/compose/compose.dev.yaml)，默认连接 `127.0.0.1:55432`；Colima 检查、手动启动及联调步骤见 [开发入门](docs/development.md)。开发命令显式使用 `docker --context colima compose`。容器尚未启动，后续 Ubuntu 部署使用 Docker Engine，并可连接已有外部数据库。
+macOS 开发联调采用 Colima 的 Docker 运行时承载本地 PostgreSQL，API 与 Worker 在本机运行。已提供 [开发数据库配置](infra/compose/compose.dev.yaml)，默认连接 `127.0.0.1:55432`；Colima 检查、手动启动及联调步骤见 [开发入门](docs/development.md)。开发命令显式使用 `docker --context colima compose`。独立测试配置使用端口 `55433` 和临时存储，详见 [PostgreSQL 集成测试](docs/postgresql-testing.md)。后续 Ubuntu 部署使用 Docker Engine，并可连接已有外部数据库。
 
 安装依赖与执行离线检查：
 

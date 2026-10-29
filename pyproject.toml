@@ -42,6 +42,7 @@ agentforge_runtime = "packages/runtime/agentforge_runtime"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+markers = ["postgresql: requires an explicitly configured, isolated PostgreSQL test database"]
 
 [tool.ruff]
 target-version = "py312"
