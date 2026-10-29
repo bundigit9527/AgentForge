@@ -4,7 +4,7 @@
 
 AgentForge 致力于连接企业知识、业务工作流、Agent 和 Skill，让智能体在受控环境中完成业务任务。项目采用模块化设计，支持逐步接入已有系统，并以 Python 统一后端开发。
 
-> 当前阶段：Python 后端初始实现。已有 API、Worker、模拟 Harness、任务持久化和 SQLite / PostgreSQL 测试；下方完整架构仍为建设目标，尚未提供完整平台或生产安装包。
+> 当前阶段：Python 后端初始实现。已有 API、Worker、模拟 / Chat Completions Harness、任务持久化和 SQLite / PostgreSQL 测试；下方完整架构仍为建设目标，尚未提供完整平台或生产安装包。
 
 ## 文档导航
 
@@ -13,10 +13,12 @@ AgentForge 致力于连接企业知识、业务工作流、Agent 和 Skill，让
 - [开发入门](docs/development.md)：安装依赖、离线测试、当前接口及实现边界。
 - [任务执行协议](docs/task-execution.md)：提交去重、实时进度、断线续传和 Worker 运行方式。
 - [PostgreSQL 集成测试](docs/postgresql-testing.md)：独立测试库、临时 schema 隔离与可重复的验证步骤。
+- [大模型路由](docs/model-routing.md)：兼容接口配置、工具循环、用量事件与真实联调边界。
+- [Agent 与会话](docs/conversations.md)：Agent 版本、消息、执行配置快照、尝试记录及手动调试。
 
 ## 当前可验证的闭环
 
-提交任务 → 数据库排队 → Worker 领取 → 模拟模型选择内置报告工具 → 保存结果 → 查询状态与事件。
+创建 Agent → 创建会话 → 提交任务 → 固定配置与历史 → Worker 领取 → 模型与工具循环 → 保存回复 → 查询消息与事件。原有独立任务接口继续可用。
 
 已支持带 `Idempotency-Key` 的重复提交保护、SSE 实时进度与断线续传，以及 Worker 持续消费和租约续期。任务取消或执行失去租约后，旧执行不能写回最终结果。
 
@@ -33,7 +35,7 @@ uv run --locked --offline ruff format --check .
 uv run --locked --offline pytest
 ```
 
-上述命令不启动服务。首版认证只用于本地开发，真实模型、长期记忆、Docker 沙箱和前端适配尚未实现。
+上述命令不启动服务。默认模型模式为 `mock`；已实现可配置的 Chat Completions 路由适配器、多轮工具调用及用量事件，通过模拟 HTTP 响应验证，真实企业路由仍待联调。首版认证只用于本地开发，长期记忆、Docker 沙箱和前端适配尚未实现。
 
 ## 项目目标
 
@@ -165,7 +167,7 @@ AgentForge 通过适配器接入已有系统。以下为规划协作关系，不
 | 工具执行环境 | Docker 沙箱 |
 | 首阶段部署 | Ubuntu + Docker Compose |
 
-初版选用 FastAPI、SQLAlchemy、Alembic 和数据库任务队列，Harness 仅包含模拟模型和无外部副作用的内置工具。真实模型运行时、队列扩容及企业认证在后续闭环中验证。
+初版选用 FastAPI、SQLAlchemy、Alembic 和数据库任务队列，Harness 支持模拟模式和 Chat Completions 模式，工具仍限定为无外部副作用的内置报告工具。真实路由兼容性、队列扩容及企业认证在后续闭环中验证。
 
 生产部署目标为后台容器化、工具沙箱独立运行。数据库、记忆和工作文件使用持久化存储；测试与生产采用独立配置和数据。后续交付将包含版本固定、健康检查、备份、升级和恢复流程。
 
@@ -181,7 +183,7 @@ AgentForge 通过适配器接入已有系统。以下为规划协作关系，不
 - [x] 增加提交去重、租约续期和可断线续传的任务事件流。
 
 - [ ] 定义服务接口、事件协议、数据模型和身份传递规则。
-- [ ] 建立 Python API、Worker、数据库和基本会话流程。
+- [x] 建立 Python API、Worker、数据库和基本会话流程。
 - [ ] 打通单个 Agent 的模型调用、工具执行与流式输出。
 - [ ] 接入 Docker 沙箱，实现资源限制、持久化和任务取消。
 - [ ] 完成记忆读写、会话摘要、权限过滤和隔离测试。

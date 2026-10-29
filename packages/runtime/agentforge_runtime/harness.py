@@ -2,6 +2,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+from agentforge_core.execution import ContextMessage, ExecutionSnapshot, ModelConfig
+
 
 @dataclass(frozen=True)
 class ToolCall:
@@ -27,8 +29,20 @@ class ExecutionStopped(Exception):
 class Harness:
     def __init__(self, model: Model | None = None):
         self.model = model or MockModel()
+        self.model_config = ModelConfig()
 
-    def execute(self, prompt: str, before_tool: Callable[[str], bool]) -> str:
+    def execute(
+        self,
+        prompt: str,
+        before_tool: Callable[[str], bool],
+        *,
+        checkpoint: Callable[[], bool] = lambda: True,
+        on_model: Callable[..., bool] | None = None,
+        execution_config: ExecutionSnapshot | None = None,
+        context: tuple[ContextMessage, ...] = (),
+    ) -> str:
+        if not checkpoint():
+            raise ExecutionStopped()
         call = self.model.plan(prompt)
         # Only this pure, built-in tool is allowed in the first milestone.
         if call.name != "example_report":

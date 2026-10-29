@@ -5,6 +5,7 @@ import pytest
 from agentforge_api.app import create_app
 from agentforge_core.models import Scope
 from agentforge_core.settings import Settings
+from agentforge_runtime.config import ModelSettings
 from agentforge_storage.database import create_database
 from agentforge_storage.repository import RunRepository
 from alembic import command
@@ -115,5 +116,5 @@ def headers():
 
 @pytest.fixture
 def client(settings, repository):
-    with TestClient(create_app(settings, repository)) as client:
+    with TestClient(create_app(settings, repository, model_settings=ModelSettings())) as client:
         yield client

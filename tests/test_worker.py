@@ -170,8 +170,8 @@ def test_watch_processes_tasks_then_drains_on_shutdown(repository, scope):
     completed = []
 
     class StoppingHarness(Harness):
-        def execute(self, prompt, before_tool):
-            result = super().execute(prompt, before_tool)
+        def execute(self, prompt, before_tool, **kwargs):
+            result = super().execute(prompt, before_tool, **kwargs)
             completed.append(prompt)
             if len(completed) == 2:
                 stop.set()

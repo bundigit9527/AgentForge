@@ -1,5 +1,7 @@
 from datetime import UTC, datetime
+from uuid import UUID
 
+from agentforge_core.execution import ExecutionSnapshot
 from agentforge_core.models import Run, RunEvent, RunStatus
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -8,6 +10,7 @@ class CreateRun(BaseModel):
     # Identity is resolved by the server, never supplied in the task body.
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     prompt: str = Field(min_length=1, max_length=10000)
+    thread_id: UUID | None = None
 
 
 class RunResponse(BaseModel):
@@ -18,6 +21,10 @@ class RunResponse(BaseModel):
     error_code: str | None
     created_at: datetime
     updated_at: datetime
+    thread_id: str | None
+    agent_id: str | None
+    agent_version: int | None
+    execution_config: ExecutionSnapshot | None
 
     @classmethod
     def from_run(cls, run: Run) -> "RunResponse":
@@ -29,6 +36,10 @@ class RunResponse(BaseModel):
             error_code=run.error_code,
             created_at=datetime.fromtimestamp(run.created_at, UTC),
             updated_at=datetime.fromtimestamp(run.updated_at, UTC),
+            thread_id=run.thread_id,
+            agent_id=run.agent_id,
+            agent_version=run.agent_version,
+            execution_config=run.execution_config,
         )
 
 

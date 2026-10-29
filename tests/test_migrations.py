@@ -26,7 +26,8 @@ def test_upgrade_preserves_existing_tasks_and_events(engine, scope, client):
         command.downgrade(config, "0001")
         connection.execute(
             sa.text(
-                "INSERT INTO runs (run_id, tenant_id, space_id, user_id, prompt, status, attempt, "
+                "INSERT INTO runs (run_id, tenant_id, space_id, user_id, "
+                "prompt, status, attempt, "
                 "event_seq, created_at, updated_at) VALUES "
                 "('legacy', :tenant, :space, :user, 'existing', 'queued', 0, 1, 1, 1)"
             ),
@@ -48,3 +49,51 @@ def test_upgrade_preserves_existing_tasks_and_events(engine, scope, client):
     assert len(repository.list_events(scope, "legacy")) == 1
     first = repository.create(scope, "new", "key")
     assert repository.create(scope, "new", "key").run_id == first.run_id
+
+
+def test_legacy_runs_remain_readable_but_missing_configuration_is_not_guessed(engine, scope):
+    from agentforge_worker.worker import Worker
+
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    with engine.begin() as connection:
+        config.attributes["connection"] = connection
+        command.downgrade(config, "0002")
+        for run_id, status, result in (
+            ("legacy-pending", "queued", None),
+            ("legacy-done", "succeeded", "old result"),
+        ):
+            connection.execute(
+                sa.text(
+                    "INSERT INTO runs (run_id, tenant_id, space_id, user_id, "
+                    "prompt, status, attempt, "
+                    "event_seq, created_at, updated_at, result) VALUES "
+                    "(:id, :tenant, :space, :user, 'old prompt', :status, 0, 1, 1, 1, :result)"
+                ),
+                {
+                    "id": run_id,
+                    "tenant": scope.tenant_id,
+                    "space": scope.space_id,
+                    "user": scope.user_id,
+                    "status": status,
+                    "result": result,
+                },
+            )
+            connection.execute(
+                sa.text(
+                    "INSERT INTO run_events (run_id, sequence, event_type, data, created_at) "
+                    "VALUES (:id, 1, :status, '{}', 1)"
+                ),
+                {"id": run_id, "status": status},
+            )
+        command.upgrade(config, "head")
+    repository = RunRepository(engine)
+    assert repository.get(scope, "legacy-done").result == "old result"
+    assert repository.get(scope, "legacy-pending").execution_config is None
+    assert Worker(repository).run_once()
+    assert repository.get(scope, "legacy-pending").error_code == "execution_config_missing"
+    assert [event.event_type for event in repository.list_events(scope, "legacy-pending")] == [
+        "queued",
+        "running",
+        "failed",
+    ]
+    assert not Worker(repository).run_once()

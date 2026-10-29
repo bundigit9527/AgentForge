@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from enum import StrEnum
 
+from agentforge_core.execution import ContextMessage, ExecutionSnapshot
+
 
 class RunStatus(StrEnum):
     QUEUED = "queued"
@@ -11,6 +13,21 @@ class RunStatus(StrEnum):
 
 
 TERMINAL_STATUSES = {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED}
+
+
+class RunErrorCode(StrEnum):
+    EXECUTION_FAILED = "execution_failed"
+    MODEL_TIMEOUT = "model_timeout"
+    MODEL_UNAVAILABLE = "model_unavailable"
+    MODEL_AUTH_FAILED = "model_auth_failed"
+    MODEL_RATE_LIMITED = "model_rate_limited"
+    MODEL_INVALID_RESPONSE = "model_invalid_response"
+    MODEL_REFUSED = "model_refused"
+    MODEL_LIMIT_EXCEEDED = "model_limit_exceeded"
+    TOOL_NOT_ALLOWED = "tool_not_allowed"
+    TOOL_INVALID_ARGUMENTS = "tool_invalid_arguments"
+    EXECUTION_CONFIG_MISSING = "execution_config_missing"
+    MODEL_CONFIGURATION_MISMATCH = "model_configuration_mismatch"
 
 
 @dataclass(frozen=True)
@@ -35,6 +52,11 @@ class Run:
     error_code: str | None
     created_at: float
     updated_at: float
+    thread_id: str | None = None
+    agent_id: str | None = None
+    agent_version: int | None = None
+    execution_config: ExecutionSnapshot | None = None
+    context: tuple[ContextMessage, ...] = ()
 
 
 @dataclass(frozen=True)

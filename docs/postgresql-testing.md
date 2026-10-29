@@ -92,3 +92,16 @@ docker --context colima compose --env-file .env.test.example -f infra/compose/co
 - Ruff 检查、格式检查和 Compose 静态校验通过。
 - 结束时确认临时测试 schema 残留为 0，测试容器与测试网络已清理；原有 Colima 运行状态保留。
 - 测试仍有一条既有的 Starlette / httpx 弃用提示，不影响测试通过。真实模型、常驻服务网络联调与生产部署不在本次验收范围内。
+
+### 模型路由功能回归（2026-10-29）
+
+加入模型适配器、工具循环及用量事件后，SQLite 模式为 138 项通过、5 项跳过，PostgreSQL 模式为 143 项通过。模型侧均使用 MockTransport，数据库侧使用真实的独立 PostgreSQL 测试容器；验证后 schema 残留为 0，测试容器和网络已清理。详见 [模型路由说明](model-routing.md)。
+
+### Agent 与会话功能回归（2026-10-29）
+
+- SQLite：167 项通过，5 项 PostgreSQL 专用用例按预期跳过。
+- 独立 PostgreSQL 17.11：172 项通过；新增会话多轮上下文、版本固定、并发提交、执行恢复、取消竞争与旧数据迁移验证。
+- Ruff 检查、格式检查通过；未增加依赖或改变第三方版本。
+- 临时 schema 残留为 0，测试容器及网络已清理；保留原有 Colima 运行状态。
+- 模型使用 MockTransport，未调用真实企业路由；未启动常驻 API / Worker，未迁移开发库。
+- 保留既有 Starlette / httpx 弃用提示。手动调试见 [Agent 与会话](conversations.md)。

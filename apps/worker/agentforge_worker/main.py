@@ -2,9 +2,12 @@ import argparse
 import logging
 import math
 import signal
+from contextlib import ExitStack
 from threading import Event
 
 from agentforge_core.settings import Settings
+from agentforge_runtime.chat_harness import configured_harness
+from agentforge_runtime.config import ModelSettings
 from agentforge_storage.database import create_database
 from agentforge_storage.repository import RunRepository
 from sqlalchemy.exc import SQLAlchemyError
@@ -14,7 +17,7 @@ from agentforge_worker.worker import Worker
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Process AgentForge tasks with the offline harness"
+        description="Process AgentForge tasks with a mock or Chat Completions model"
     )
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--once", action="store_true", help="Process at most one task and exit")
@@ -32,27 +35,38 @@ def main() -> None:
     ):
         parser.error("--lease-seconds must be positive; heartbeat must be shorter than the lease")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    engine = create_database(Settings.from_env().database_url)
+    try:
+        settings = Settings.from_env()
+        model_settings = ModelSettings.from_env()
+    except ValueError as exc:
+        parser.error(str(exc))
     previous_handlers = {}
     try:
-        worker = Worker(
-            RunRepository(engine), lease_seconds=args.lease_seconds, heartbeat_interval=interval
-        )
-        if args.once:
-            handled = worker.run_once()
-            print("Task processed" if handled else "No eligible task")
-        else:
-            stop = Event()
-            for signum in (signal.SIGINT, signal.SIGTERM):
-                previous_handlers[signum] = signal.signal(signum, lambda *_: stop.set())
-            worker.run_forever(stop, poll_interval=args.poll_interval)
+        with ExitStack() as resources:
+            engine = create_database(settings.database_url)
+            resources.callback(engine.dispose)
+            worker = Worker(
+                RunRepository(engine),
+                harness_factory=lambda snapshot: configured_harness(
+                    model_settings.for_snapshot(snapshot.model)
+                ),
+                lease_seconds=args.lease_seconds,
+                heartbeat_interval=interval,
+            )
+            if args.once:
+                handled = worker.run_once()
+                print("Task processed" if handled else "No eligible task")
+            else:
+                stop = Event()
+                for signum in (signal.SIGINT, signal.SIGTERM):
+                    previous_handlers[signum] = signal.signal(signum, lambda *_: stop.set())
+                worker.run_forever(stop, poll_interval=args.poll_interval)
     except SQLAlchemyError:
         logging.error("Task storage is unavailable; check database access and migrations")
         raise SystemExit(1) from None
     finally:
         for signum, handler in previous_handlers.items():
             signal.signal(signum, handler)
-        engine.dispose()
 
 
 if __name__ == "__main__":

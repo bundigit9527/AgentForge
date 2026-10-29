@@ -1,6 +1,6 @@
 # 开发入门
 
-当前提供 Python 后端骨架和离线任务闭环。代码已包含 API、单次 / 持续运行 Worker、模拟模型、内置报告工具、提交去重、数据库任务队列及 SSE 实时事件；真实模型、企业登录、长期记忆、Docker 沙箱、Web 和桌面端尚未接入。
+当前提供 Python 后端骨架和离线任务闭环。代码已包含 API、单次 / 持续运行 Worker、模拟模型、内置报告工具、提交去重、数据库任务队列及 SSE 实时事件；模型适配器与工具循环已实现，真实企业路由待联调；企业登录、长期记忆、Docker 沙箱、Web 和桌面端尚未接入。
 
 ## 环境与安装
 
@@ -67,7 +67,8 @@ uv run --locked --offline pytest
 | `packages/core/agentforge_core` | 身份范围、任务状态、领域对象和配置 |
 | `packages/contracts/agentforge_contracts` | 请求与响应结构，拒绝客户端注入身份与任务状态 |
 | `packages/storage/agentforge_storage` | SQLAlchemy 数据定义和事务化任务队列 |
-| `packages/runtime/agentforge_runtime/harness.py` | 模型接口、模拟决策和白名单内置工具 |
+| `packages/runtime/agentforge_runtime/harness.py` | 模拟决策和白名单内置工具 |
+| `packages/runtime/agentforge_runtime/chat_model.py`、`chat_harness.py` | Chat Completions 适配、多轮工具调用和用量事件 |
 | `migrations` | Alembic 数据库迁移；应用启动不自动建表 |
 | `tests` | 离线行为与迁移验证 |
 
@@ -87,15 +88,15 @@ uv run --locked --offline pytest
 
 任务接口需要 Bearer 令牌。令牌只映射到服务端配置的一组开发身份，尚未实现企业登录、用户管理或团队共享授权。未配置令牌时任务接口返回 503；令牌无效返回 401；不存在或无权限的任务统一返回 404。重复取消已取消任务返回当前状态，取消已成功或失败的任务返回 409。
 
-任务尚未关联 Agent 目录、会话或工作流，固定使用模拟模型和内置示例工具。使用提交去重键可以避免网络重试产生新任务；同一身份范围内复用键但改变任务内容会返回 409。事件分页和 SSE 接口并存，详细约定见 [任务执行协议](task-execution.md)。
+任务尚未关联 Agent 目录、会话或工作流，默认使用模拟模型和内置示例工具；Worker 可显式配置 Chat Completions 模式，见 [大模型路由](model-routing.md)。使用提交去重键可以避免网络重试产生新任务；同一身份范围内复用键但改变任务内容会返回 409。事件分页和 SSE 接口并存，详细约定见 [任务执行协议](task-execution.md)。
 
 ## 数据与恢复
 
 - 首版由数据库任务表兼任持久化队列，任务提交与事件写入在同一事务中完成，不存在数据库与外部消息队列的双写。
 - Worker 用条件更新领取任务，默认租约 60 秒，后台每 20 秒续期；执行尝试通过独立标识隔离，过期或取消的尝试不能提交后续工具事件和最终结果。
-- Worker 中断后，租约过期的任务可以重新领取，最多尝试三次。只有当前无外部副作用的模拟工具允许自动重做。
+- Worker 中断后，租约过期的任务可以重新领取，最多尝试三次。当前纯内置工具允许重做；模型调用在恢复时可能再次发起并重复计费，不能据此重放外部业务副作用。
 - 已实现后台续租与任务事件流；模型 token 流式输出、审批暂停及外部操作补偿仍待实现。真实模型、长任务或外部业务工具接入前需补齐相应机制。
-- 取消阻止后续状态写入；正在计算的同步模拟函数不会被强制杀死。未来沙箱进程和模型请求需要独立的取消适配。
+- 取消阻止后续状态写入；正在计算的同步模拟函数不会被强制杀死。Chat Completions 模式在每轮请求前后检查租约和取消状态，但已发出的同步 HTTP 请求不能立即中断；沙箱进程取消仍待实现。
 - 结果作为文本保存在数据库中；文件产物、知识库和长期记忆尚未实现。
 
 生产目标仍为 PostgreSQL。已声明 PostgreSQL 驱动和迁移代码，并已在独立 PostgreSQL 17.11 测试库验证迁移、并发、应用层隔离与租约恢复。生产账号权限、网络服务联调、容量与备份恢复仍需单独验证。
@@ -146,7 +147,7 @@ API、Worker 和迁移工具应指向同一目标数据库。容器中的 `local
 - 是否为 AgentForge 专用开发/测试库，以及可进行的迁移操作。
 - 连接账号、TLS/证书要求，以及当前电脑和 Ubuntu 服务器的网络可达性。
 
-初次接入优先使用已有实例上的 AgentForge 专用开发/测试库与账号。当前迁移使用连接的默认 schema，会创建 `runs`、`run_events` 和 `alembic_version`；共享业务库下的独立 schema 尚未配置，需明确 schema 与权限后再适配。默认离线测试使用临时 SQLite；显式集成测试只读取独立测试连接变量，并把迁移及降级限定在每用例临时 schema，不能使用业务库运行。
+初次接入优先使用已有实例上的 AgentForge 专用开发/测试库与账号。当前迁移使用连接的默认 schema，会创建 `runs`、`run_events`、`agents`、`agent_versions`、`threads`、`messages`、`run_attempts` 和 `alembic_version`；共享业务库下的独立 schema 尚未配置，需明确 schema 与权限后再适配。默认离线测试使用临时 SQLite；显式集成测试只读取独立测试连接变量，并把迁移及降级限定在每用例临时 schema，不能使用业务库运行。
 
 数据库信息确认后，先检查连通性、版本及当前结构，再在指定开发/测试库执行 `uv run --locked alembic upgrade head`。该命令会修改数据库结构；应用启动和创建项目本身均不会自动执行它。不要将现有测试直接改为对共享业务库运行。
 
@@ -164,6 +165,10 @@ API 启动后通过 `/docs` 查看接口并设置 Bearer 令牌。提交任务�
 uv run --env-file .env --locked agentforge-worker --once
 ```
 
-`--once` 每次领取最多一个任务后退出。后续需要持续处理队列时可手动使用 `--watch`，支持租约续期和退出信号处理；本次没有启动常驻进程。完整参数与数据库 `0002` 升级说明见 [任务执行协议](task-execution.md)。
+`--once` 每次领取最多一个任务后退出。后续需要持续处理队列时可手动使用 `--watch`，支持租约续期和退出信号处理；本次没有启动常驻进程。完整参数与数据库 `0003` 升级说明见 [任务执行协议](task-execution.md)。
 
 实现参考：[FastAPI 测试文档](https://fastapi.tiangolo.com/tutorial/testing/)、[SQLAlchemy 事务文档](https://docs.sqlalchemy.org/en/20/core/connections.html)、[Alembic 迁移文档](https://alembic.sqlalchemy.org/en/latest/tutorial.html)。
+
+## Agent 与会话调试
+
+新增 Agent、会话、消息和执行尝试接口，数据库需升级到 `0003`。按 [Agent 与会话](conversations.md) 的步骤验证两轮交流、版本固定、重复提交和恢复。旧版排队任务缺少执行快照时不会推测模型执行，需要重新提交。
