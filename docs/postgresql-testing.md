@@ -105,3 +105,18 @@ docker --context colima compose --env-file .env.test.example -f infra/compose/co
 - 临时 schema 残留为 0，测试容器及网络已清理；保留原有 Colima 运行状态。
 - 模型使用 MockTransport，未调用真实企业路由；未启动常驻 API / Worker，未迁移开发库。
 - 保留既有 Starlette / httpx 弃用提示。手动调试见 [Agent 与会话](conversations.md)。
+
+### 工具执行框架回归（2026-10-29）
+
+- SQLite：196 项通过，5 项 PostgreSQL 专用用例跳过。
+- PostgreSQL 17.11：201 项通过；新增工具契约、版本与允许列表、作用域隔离、同一尝试的重复调用、取消/过期结果拦截、事务回滚、迁移 0004 和工具事件续传验证。
+- Ruff、格式检查通过，无新增依赖或第三方版本变化。
+- 临时 schema 残留为 0，测试容器与网络已清理，原有 Colima 保留。
+- 模型使用 MockTransport，未调用真实路由或业务系统；未启动常驻 API / Worker，未迁移开发库。
+- 仍有一条既有 Starlette / httpx 弃用提示。手动验证见 [版本化工具](tools.md)。
+
+## Skill 安装与 Rakazo 式按需读取验证（2026-10-30）
+
+- SQLite：231 项通过，5 项 PostgreSQL 专用用例跳过。
+- PostgreSQL 17.11：236 项通过；覆盖内置与安装目录、并发安装去重、版本摘要冲突、跨身份拒绝、卸载后的快照保留、skill_read 作用域及迁移 0005。
+- 模型与 Hub 使用 MockTransport，不访问真实服务。临时 schema 清理后计数为 0，专用测试容器和网络已移除，开发库不变。

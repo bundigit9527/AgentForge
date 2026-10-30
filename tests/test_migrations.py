@@ -97,3 +97,53 @@ def test_legacy_runs_remain_readable_but_missing_configuration_is_not_guessed(en
         "failed",
     ]
     assert not Worker(repository).run_once()
+
+
+def test_tool_migration_preserves_conversation_run_and_config(engine, scope, client):
+    from agentforge_core.execution import ExecutionSnapshot
+    from agentforge_storage.conversations import ConversationRepository
+    from agentforge_worker.worker import Worker
+
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    with engine.begin() as connection:
+        config.attributes["connection"] = connection
+        command.downgrade(config, "0003")
+    repository = RunRepository(engine)
+    conversations = ConversationRepository(engine, repository.clock)
+    agent = conversations.create_agent(scope, "existing", ExecutionSnapshot(instructions="keep"))
+    thread = conversations.create_thread(scope, agent["agent_id"], "existing conversation")
+    run = repository.create(scope, "existing prompt", thread_id=thread["thread_id"])
+    assert client.get("/health/ready").status_code == 503
+    with engine.begin() as connection:
+        config.attributes["connection"] = connection
+        command.upgrade(config, "head")
+    assert client.get("/health/ready").status_code == 200
+    assert repository.get(scope, run.run_id).execution_config.instructions == "keep"
+    assert len(conversations.list_messages(scope, thread["thread_id"])) == 1
+    assert repository.list_tool_calls(scope, run.run_id) == []
+    Worker(repository).run_once()
+    assert len(conversations.list_messages(scope, thread["thread_id"])) == 2
+    assert repository.list_tool_calls(scope, run.run_id)[0]["status"] == "succeeded"
+
+
+def test_skill_migration_preserves_existing_run_and_tool_history(engine, scope, client):
+    from agentforge_core.execution import ExecutionSnapshot
+    from agentforge_worker.worker import Worker
+
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    with engine.begin() as connection:
+        config.attributes["connection"] = connection
+        command.downgrade(config, "0004")
+    repository = RunRepository(engine)
+    run = repository.create(scope, "before skills")
+    Worker(repository).run_once()
+    existing_calls = repository.list_tool_calls(scope, run.run_id)
+    assert client.get("/health/ready").status_code == 503
+    with engine.begin() as connection:
+        config.attributes["connection"] = connection
+        command.upgrade(config, "head")
+    assert client.get("/health/ready").status_code == 200
+    assert repository.get(scope, run.run_id).status == "succeeded"
+    assert repository.list_tool_calls(scope, run.run_id) == existing_calls
+    legacy = ExecutionSnapshot.model_validate({"version": 1, "harness_version": 1, "tools": []})
+    assert legacy.skills == ()

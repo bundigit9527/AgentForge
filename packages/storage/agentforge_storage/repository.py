@@ -15,11 +15,12 @@ from agentforge_core.models import (
     RunStatus,
     Scope,
 )
+from agentforge_core.tools import ToolInvocation, ToolTicket
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from agentforge_storage.conversations import agent_row, scoped, thread_row
-from agentforge_storage.schema import attempts, events, messages, runs, threads
+from agentforge_storage.schema import attempts, events, messages, runs, threads, tool_calls
 
 
 def _scope_filter(scope: Scope):
@@ -105,6 +106,17 @@ def _complete_conversation(connection, row, now):
                 created_at=now,
             )
         )
+
+
+def _abandon_tool_calls(connection, row, reason):
+    connection.execute(
+        tool_calls.update()
+        .where(
+            tool_calls.c.run_id == row["run_id"],
+            tool_calls.c.status == "running",
+        )
+        .values(status="abandoned", error_code=reason, finished_at=row["updated_at"])
+    )
 
 
 class RunRepository:
@@ -312,6 +324,7 @@ class RunRepository:
                     )
                     .values(status="cancelled", finished_at=row["updated_at"])
                 )
+                _abandon_tool_calls(connection, row, "run_cancelled")
                 _complete_conversation(connection, row, row["updated_at"])
                 _event(connection, row, "cancelled", {})
                 return _run(row)
@@ -376,6 +389,7 @@ class RunRepository:
                     )
                     .values(status="expired", error_code="lease_expired", finished_at=now)
                 )
+                _abandon_tool_calls(connection, row, "lease_expired")
                 if exhausted:
                     _complete_conversation(connection, row, now)
                 else:
@@ -502,6 +516,7 @@ class RunRepository:
                     finished_at=now,
                 )
             )
+            _abandon_tool_calls(connection, row, "run_finished")
             _complete_conversation(connection, row, now)
             _event(connection, row, status.value, {})
             return True
@@ -515,6 +530,174 @@ class RunRepository:
                     .join(runs, attempts.c.run_id == runs.c.run_id)
                     .where(_scope_filter(scope), attempts.c.run_id == run_id)
                     .order_by(attempts.c.number)
+                )
+                .mappings()
+                .all()
+            )
+
+    def start_tool(self, claim: Claim, invocation: ToolInvocation) -> ToolTicket | None:
+        now = self.clock()
+        with self.engine.begin() as connection:
+            # Serialize duplicate tool starts with completion/cancellation through the Run row.
+            row = (
+                connection.execute(
+                    runs.update()
+                    .where(self._owned(claim, now))
+                    .values(updated_at=now)
+                    .returning(runs)
+                )
+                .mappings()
+                .first()
+            )
+            if row is None:
+                return None
+            previous = (
+                connection.execute(
+                    sa.select(tool_calls).where(
+                        tool_calls.c.attempt_id == claim.attempt_id,
+                        tool_calls.c.call_id == invocation.call_id,
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            if previous is not None:
+                if (
+                    previous["name"] != invocation.name
+                    or previous["version"] != invocation.version
+                    or previous["arguments_hash"] != invocation.arguments_hash
+                    or previous["status"] != "succeeded"
+                ):
+                    raise RunConflict("Tool invocation is already claimed or changed")
+                return ToolTicket(
+                    previous["tool_call_id"], cached=True, content=previous["content"]
+                )
+            row = (
+                connection.execute(
+                    runs.update()
+                    .where(runs.c.run_id == claim.run.run_id)
+                    .values(event_seq=runs.c.event_seq + 1)
+                    .returning(runs)
+                )
+                .mappings()
+                .one()
+            )
+            tool_call_id = str(uuid4())
+            connection.execute(
+                tool_calls.insert().values(
+                    tool_call_id=tool_call_id,
+                    run_id=row["run_id"],
+                    attempt_id=claim.attempt_id,
+                    sequence=row["event_seq"],
+                    call_id=invocation.call_id,
+                    name=invocation.name,
+                    version=invocation.version,
+                    arguments=invocation.arguments,
+                    arguments_hash=invocation.arguments_hash,
+                    status="running",
+                    started_at=now,
+                )
+            )
+            _event(
+                connection,
+                row,
+                "tool_started",
+                {
+                    "tool_call_id": tool_call_id,
+                    "call_id": invocation.call_id,
+                    "name": invocation.name,
+                    "version": invocation.version,
+                    "attempt": row["attempt"],
+                },
+            )
+            return ToolTicket(tool_call_id)
+
+    def complete_tool(
+        self,
+        claim: Claim,
+        ticket: ToolTicket,
+        *,
+        output: dict | None = None,
+        content: str | None = None,
+        error_code: RunErrorCode | None = None,
+    ) -> bool:
+        if error_code is not None and not isinstance(error_code, RunErrorCode):
+            raise ValueError("Expected a public tool failure code")
+        now = self.clock()
+        with self.engine.begin() as connection:
+            row = (
+                connection.execute(
+                    runs.update()
+                    .where(self._owned(claim, now))
+                    .values(updated_at=now)
+                    .returning(runs)
+                )
+                .mappings()
+                .first()
+            )
+            if row is None:
+                return False
+            call = (
+                connection.execute(
+                    tool_calls.update()
+                    .where(
+                        tool_calls.c.tool_call_id == ticket.tool_call_id,
+                        tool_calls.c.run_id == claim.run.run_id,
+                        tool_calls.c.attempt_id == claim.attempt_id,
+                        tool_calls.c.status == "running",
+                    )
+                    .values(
+                        status="failed" if error_code else "succeeded",
+                        output=output if error_code is None else None,
+                        content=content if error_code is None else None,
+                        error_code=error_code.value if error_code else None,
+                        finished_at=now,
+                    )
+                    .returning(tool_calls)
+                )
+                .mappings()
+                .first()
+            )
+            if call is None:
+                return False
+            row = (
+                connection.execute(
+                    runs.update()
+                    .where(runs.c.run_id == claim.run.run_id)
+                    .values(event_seq=runs.c.event_seq + 1)
+                    .returning(runs)
+                )
+                .mappings()
+                .one()
+            )
+            _event(
+                connection,
+                row,
+                "tool_failed" if error_code else "tool_completed",
+                {
+                    "tool_call_id": ticket.tool_call_id,
+                    "name": call["name"],
+                    "version": call["version"],
+                    "attempt": row["attempt"],
+                    "error_code": error_code.value if error_code else None,
+                },
+            )
+            return True
+
+    def list_tool_calls(self, scope: Scope, run_id: str, after: int = 0, limit: int = 100):
+        self.get(scope, run_id)
+        with self.engine.connect() as connection:
+            return (
+                connection.execute(
+                    sa.select(tool_calls)
+                    .join(runs, tool_calls.c.run_id == runs.c.run_id)
+                    .where(
+                        _scope_filter(scope),
+                        tool_calls.c.run_id == run_id,
+                        tool_calls.c.sequence > after,
+                    )
+                    .order_by(tool_calls.c.sequence)
+                    .limit(limit)
                 )
                 .mappings()
                 .all()

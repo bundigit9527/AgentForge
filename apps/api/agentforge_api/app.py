@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 from uuid import UUID
 
+from agentforge_connectors.skill_hub import HttpSkillHub, SkillHubSettings
 from agentforge_contracts.conversations import (
     AgentPage,
     AgentResponse,
@@ -15,17 +16,31 @@ from agentforge_contracts.conversations import (
     UpdateAgent,
 )
 from agentforge_contracts.runs import CreateRun, EventPage, EventResponse, RunResponse
+from agentforge_contracts.skills import InstallSkill, RemoteSkillPage, SkillPage
+from agentforge_contracts.tools import ToolCallPage, ToolCatalog
 from agentforge_core.execution import ExecutionSnapshot
 from agentforge_core.models import TERMINAL_STATUSES, RunConflict, RunNotFound, Scope
 from agentforge_core.settings import Settings
+from agentforge_core.skills import (
+    HubInvalidResponse,
+    HubUnavailable,
+    SkillHub,
+    SkillId,
+    SkillSnapshot,
+)
 from agentforge_runtime.config import ModelSettings
+from agentforge_runtime.errors import RuntimeFailure
+from agentforge_runtime.tools import BUILTIN_TOOLS, allowed_tools_from_env
+from agentforge_skills.service import SkillService
 from agentforge_storage.conversations import ConversationRepository
 from agentforge_storage.database import create_database
 from agentforge_storage.repository import RunRepository
 from agentforge_storage.schema import SCHEMA_REVISION
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
+from agentforge_storage.skills import SkillRepository
+from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
@@ -62,21 +77,45 @@ def create_app(
     run_repository: RunRepository | None = None,
     *,
     model_settings: ModelSettings | None = None,
+    allowed_tools: tuple[str, ...] | None = None,
+    skill_hub: SkillHub | None = None,
 ) -> FastAPI:
     configuration = settings or Settings.from_env()
     model_configuration = model_settings or ModelSettings.from_env(require_credentials=False)
+    tool_allowlist = allowed_tools if allowed_tools is not None else allowed_tools_from_env()
+    BUILTIN_TOOLS.validate_allowlist(tool_allowlist)
+
+    def agent_configuration(body, scope):
+        try:
+            BUILTIN_TOOLS.select(body.tools, tool_allowlist)
+        except RuntimeFailure:
+            raise HTTPException(422, "Unknown or disallowed tool version") from None
+        try:
+            return ExecutionSnapshot(
+                model=model_configuration.snapshot(),
+                instructions=body.instructions,
+                tools=body.tools,
+                skills=skills.resolve(scope, body.skills),
+            )
+        except ValidationError:
+            raise HTTPException(422, "Invalid skill selection or missing required tools") from None
+
     owned_engine = (
         None if run_repository is not None else create_database(configuration.database_url)
     )
     store = run_repository if run_repository is not None else RunRepository(owned_engine)
 
     conversations = ConversationRepository(store.engine, store.clock)
+    owned_hub = HttpSkillHub(SkillHubSettings.from_env()) if skill_hub is None else None
+    skills = SkillService(SkillRepository(store.engine, store.clock), skill_hub or owned_hub)
 
     @asynccontextmanager
     async def lifespan(_app):
         try:
             yield
         finally:
+            if owned_hub is not None:
+                owned_hub.close()
             if owned_engine is not None:
                 owned_engine.dispose()
 
@@ -91,6 +130,16 @@ def create_app(
     @app.exception_handler(RunConflict)
     async def conflict(_request, _error):
         return JSONResponse(status_code=409, content={"detail": "Resource state conflict"})
+
+    @app.exception_handler(HubUnavailable)
+    async def hub_unavailable(_request, _error):
+        return JSONResponse(
+            status_code=503, content={"detail": "Skill Hub is unavailable or not configured"}
+        )
+
+    @app.exception_handler(HubInvalidResponse)
+    async def hub_invalid(_request, _error):
+        return JSONResponse(status_code=502, content={"detail": "Invalid Skill Hub response"})
 
     @app.get("/health/live")
     def live():
@@ -110,24 +159,85 @@ def create_app(
                 connection.execute(text("SELECT run_id FROM runs LIMIT 0"))
                 connection.execute(text("SELECT run_id FROM run_events LIMIT 0"))
                 connection.execute(text("SELECT execution_config FROM runs LIMIT 0"))
-                for table in ("agents", "agent_versions", "threads", "messages", "run_attempts"):
+                for table in (
+                    "agents",
+                    "agent_versions",
+                    "threads",
+                    "messages",
+                    "run_attempts",
+                    "tool_calls",
+                    "skill_installations",
+                ):
                     connection.execute(text(f"SELECT 1 FROM {table} LIMIT 0"))
         except SQLAlchemyError as exc:
             raise HTTPException(503, "Database schema is unavailable") from exc
         return {"status": "ok"}
 
+    @app.get("/api/v1/skills", response_model=SkillPage)
+    def list_skills(
+        scope: ScopeDependency,
+        offset: Annotated[int, Query(ge=0)] = 0,
+        limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    ):
+        items = skills.list(scope, offset, limit + 1)
+        return {
+            "items": items[:limit],
+            "next_offset": offset + limit if len(items) > limit else None,
+        }
+
+    @app.get("/api/v1/skills/hub", response_model=RemoteSkillPage)
+    def browse_hub(
+        _scope: ScopeDependency,
+        offset: Annotated[int, Query(ge=0)] = 0,
+        limit: Annotated[int, Query(ge=1, le=50)] = 20,
+        q: Annotated[str, Query(max_length=200)] = "",
+    ):
+        page = skills.hub.catalog(offset, limit, q)
+        return {**page.model_dump(), "source_id": skills.hub.source_id}
+
+    @app.get("/api/v1/skills/hub/{skill_id}/versions/{version}")
+    def preview_hub(
+        skill_id: SkillId, version: Annotated[int, Path(ge=1, le=999999)], _scope: ScopeDependency
+    ):
+        manifest = skills.hub.manifest(skill_id, version)
+        return {
+            "source_id": skills.hub.source_id,
+            "manifest": manifest,
+            "sha256": manifest.digest(),
+        }
+
+    @app.post("/api/v1/skills/install", response_model=SkillSnapshot, status_code=201)
+    def install_skill(body: InstallSkill, scope: ScopeDependency):
+        return skills.install(scope, body)
+
+    @app.delete("/api/v1/skills/installations/{installation_id}", status_code=204)
+    def uninstall_skill(installation_id: UUID, scope: ScopeDependency):
+        skills.repository.uninstall(scope, str(installation_id))
+        return Response(status_code=204)
+
+    @app.get("/api/v1/tools", response_model=ToolCatalog)
+    def get_tools(_scope: ScopeDependency):
+        return {"items": BUILTIN_TOOLS.catalog(tool_allowlist)}
+
+    @app.get("/api/v1/runs/{run_id}/tool-calls", response_model=ToolCallPage)
+    def get_tool_calls(
+        run_id: UUID,
+        scope: ScopeDependency,
+        repo: RepositoryDependency,
+        after: Annotated[int, Query(ge=0, le=2**63 - 1)] = 0,
+        limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    ):
+        items = repo.list_tool_calls(scope, str(run_id), after, limit)
+        return {"items": items, "next_cursor": items[-1]["sequence"] if items else after}
+
     @app.post("/api/v1/agents", response_model=AgentResponse, status_code=201)
     def create_agent(body: CreateAgent, scope: ScopeDependency):
-        config = ExecutionSnapshot(
-            model=model_configuration.snapshot(), instructions=body.instructions
-        )
+        config = agent_configuration(body, scope)
         return conversations.create_agent(scope, body.name, config)
 
     @app.put("/api/v1/agents/{agent_id}", response_model=AgentResponse)
     def update_agent(agent_id: UUID, body: UpdateAgent, scope: ScopeDependency):
-        config = ExecutionSnapshot(
-            model=model_configuration.snapshot(), instructions=body.instructions
-        )
+        config = agent_configuration(body, scope)
         return conversations.update_agent(
             scope, str(agent_id), body.expected_version, body.name, config
         )
@@ -191,7 +301,10 @@ def create_app(
                 body.prompt,
                 idempotency_key,
                 thread_id=str(body.thread_id) if body.thread_id else None,
-                execution_config=ExecutionSnapshot(model=model_configuration.snapshot()),
+                execution_config=ExecutionSnapshot(
+                    model=model_configuration.snapshot(),
+                    tools=("example_report@1",) if "example_report@1" in tool_allowlist else (),
+                ),
             )
         )
 

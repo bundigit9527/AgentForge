@@ -8,6 +8,7 @@ from threading import Event
 from agentforge_core.settings import Settings
 from agentforge_runtime.chat_harness import configured_harness
 from agentforge_runtime.config import ModelSettings
+from agentforge_runtime.tools import allowed_tools_from_env
 from agentforge_storage.database import create_database
 from agentforge_storage.repository import RunRepository
 from sqlalchemy.exc import SQLAlchemyError
@@ -38,6 +39,7 @@ def main() -> None:
     try:
         settings = Settings.from_env()
         model_settings = ModelSettings.from_env()
+        allowed_tools = allowed_tools_from_env()
     except ValueError as exc:
         parser.error(str(exc))
     previous_handlers = {}
@@ -52,6 +54,7 @@ def main() -> None:
                 ),
                 lease_seconds=args.lease_seconds,
                 heartbeat_interval=interval,
+                allowed_tools=allowed_tools,
             )
             if args.once:
                 handled = worker.run_once()

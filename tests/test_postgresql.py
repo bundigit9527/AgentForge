@@ -38,6 +38,7 @@ def test_task_and_events_survive_engine_recreation(client, headers, database_url
             "queued",
             "running",
             "tool_started",
+            "tool_completed",
             "succeeded",
         ]
     finally:

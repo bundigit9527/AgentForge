@@ -6,18 +6,9 @@ from agentforge_core.models import RunErrorCode
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from agentforge_runtime.config import ModelSettings
+from agentforge_runtime.errors import RuntimeFailure as RuntimeFailure
 
 MAX_RESPONSE_BYTES = 1024 * 1024
-
-
-class RuntimeFailure(Exception):
-    """Only a stable public code, never an upstream body or exception message."""
-
-    def __init__(self, code: RunErrorCode):
-        if not isinstance(code, RunErrorCode):
-            raise TypeError("Expected a known run error code")
-        self.code = code
-        super().__init__(code.value)
 
 
 class Function(BaseModel):
@@ -90,8 +81,7 @@ class ChatCompletionsModel:
                 json={
                     "model": self.name,
                     "messages": messages,
-                    "tools": tools,
-                    "tool_choice": "auto",
+                    **({"tools": tools, "tool_choice": "auto"} if tools else {}),
                     "stream": False,
                     "n": 1,
                     "max_completion_tokens": self.settings.max_completion_tokens,

@@ -24,7 +24,7 @@ flowchart LR
 
 ## 执行配置
 
-每个新 Run 保存 `execution_config`：协议版本、Harness 版本、模型协议/名称/路由指纹、超时/轮数/输出上限、Agent 指令和 `example_report@1` 工具版本。`agent_id`、`agent_version` 和 `thread_id` 单独记录。这里的工具版本只是内置工具标识，尚未实现 Skill 广场或通用工具注册中心。
+每个新 Run 保存 `execution_config`：协议版本、Harness 版本、模型协议/名称/路由指纹、超时/轮数/输出上限、Agent 指令和所选工具版本。`agent_id`、`agent_version` 和 `thread_id` 单独记录。已有内置工具注册表、部署级允许列表和调用记录，已增加内置 Skill、Hub HTTP 适配、安装副本与绑定，真实广场待联调，详见 [版本化工具](tools.md) 和 [Skill 安装](skills.md)。
 
 API 读取模型名称、地址和限制，用于生成配置；不需要读取模型密钥。Worker 使用本机配置中的密钥访问同一路由。密钥及原始路由地址不写入快照或响应。API 与 Worker 应使用一致的模型协议、路由地址配置；地址去除末尾 `/` 后计算指纹。
 
@@ -55,7 +55,7 @@ Agent / 会话列表按创建时间、ID 排序，以 offset 分页；消息与�
 
 先按 [开发入门](development.md) 配置本地数据库和开发令牌；这份说明不会自动启动服务。
 
-1. 执行 `uv run --env-file .env --locked alembic upgrade head` 升级到 `0003`。
+1. 执行 `uv run --env-file .env --locked alembic upgrade head` 升级到最新迁移（当前 `0005`）。
 2. 按开发入门启动 API，访问 `http://127.0.0.1:8000/docs`，用开发 Bearer 令牌授权。
 3. 创建 Agent，记录 agent_id；创建会话，记录 thread_id。
 4. 向会话提交第一条 Run，执行 `uv run --env-file .env --locked agentforge-worker --once`，查询消息，预期为一条用户消息和一条助手回复。
@@ -71,3 +71,7 @@ Agent / 会话列表按创建时间、ID 排序，以 offset 分页；消息与�
 迁移 `0003` 新增五张表和 Run 字段，不删除既有任务或事件，也不推测历史消息和执行尝试。旧 Run 的快照为 NULL；已结束的历史仍可查询，未结束的旧 Run 被领取后以 `execution_config_missing` 失败，不推测原模型继续执行。需要继续旧任务时，以已确认的新配置重新提交。
 
 数据库升级不代表业务服务已部署。完整验证记录见 [PostgreSQL 集成测试](postgresql-testing.md)。
+
+## Skill 绑定
+
+Agent 创建和完整更新可提交 `skills` 引用列表，默认空列表。服务端解析内置或当前身份已安装的指定版本，保存完整内容与摘要；Run 沿用 Agent 的技能快照。Harness 先提供目录，模型通过 `skill_read` 读取正文。新版本安装或卸载目录项不会改写既有快照；选用新版需更新 Agent 并创建新会话。详情见 [Skill 安装](skills.md)。

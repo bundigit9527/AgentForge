@@ -66,7 +66,7 @@ def test_unknown_tool_is_rejected_without_execution(repository, scope):
 
     run = repository.create(scope, "test")
     Worker(repository, Harness(UnsafeModel())).run_once()
-    assert repository.get(scope, run.run_id).error_code == "execution_failed"
+    assert repository.get(scope, run.run_id).error_code == "tool_not_allowed"
     assert [e.event_type for e in repository.list_events(scope, run.run_id)] == [
         "queued",
         "running",

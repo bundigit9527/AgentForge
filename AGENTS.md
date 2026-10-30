@@ -7,8 +7,12 @@
 - AgentForge（智构）是采用 MIT 协议的企业级 Agent 平台，后端统一使用 Python。
 - 当前已实现 API、Worker、模拟 Harness、数据库任务队列、任务与事件持久化、提交去重、SSE 续传和租约续期。已有版本化 Agent、会话、消息、执行尝试和不可变运行快照；同一会话串行提交，历史上下文使用最近 20 个成功轮次。
 - 已实现可配置的 Chat Completions 模型适配器、多轮工具循环和用量事件，默认保持模拟模式；真实企业路由尚待联调。企业认证、长期记忆、Supervisor、Computer 工具沙箱、Web 和桌面端仍属后续建设内容。目录中的职责说明不代表功能已经实现。
+- 已实现纯函数工具注册、Agent 工具子集、部署级允许列表、调用记录与结果验证；尚无企业 RBAC、人工审批或外部操作恢复能力。
 - Web 与桌面端保留 React / TypeScript、Electron 的技术方向；不要把“后端使用 Python”扩大为重写所有客户端。
 - 当前离线测试使用 SQLite；生产数据库目标是 PostgreSQL。明确区分离线验证、真实数据库验证和生产验证。
+
+- 架构以 Rakazo 的模块职责和执行链路为基准，差异与未完成能力见 `docs/rakazo-alignment.md`；不要把对齐目标描述为已经全面实现。
+- Skill 已支持三个内置配方、HTTP JSON Hub 列表与安装、作用域内版本副本、Agent / Run 快照和 `skill_read`。技能正文是操作说明，不赋予工具权限。Hub 在 API 的连接器中访问，Worker 只读取本次运行快照。
 
 ## 先阅读的文档
 
@@ -18,6 +22,9 @@
 - [docs/task-execution.md](docs/task-execution.md)：幂等、事件流、取消与租约协议。
 - [docs/model-routing.md](docs/model-routing.md)：模型配置、接口边界、工具循环和错误码。
 - [Agent 与会话](docs/conversations.md)：Agent 版本、消息、执行配置快照、尝试记录及手动调试。
+- [版本化工具](docs/tools.md)：工具注册、允许列表、输入输出验证、执行记录和调试。
+- [Skill 与广场安装](docs/skills.md)：内置、安装、版本快照和按需读取。
+- [Rakazo 架构对齐](docs/rakazo-alignment.md)：实现映射与后续边界。
 - [docs/roadmap.md](docs/roadmap.md)：后续阶段与验收目标。
 
 发现文档与代码不一致时，先核实实际行为，再随本次变更更新相关说明。不要将规划功能描述为已完成。
@@ -32,6 +39,8 @@
 | `packages/contracts/agentforge_contracts/` | HTTP 请求与响应结构 |
 | `packages/storage/agentforge_storage/` | SQLAlchemy 表定义、数据库连接与事务化数据访问 |
 | `packages/runtime/agentforge_runtime/` | 模型接口、Harness 与受控工具调用 |
+| `packages/skills/agentforge_skills/` | 内置 Skill、安装目录与选择服务 |
+| `packages/connectors/agentforge_connectors/` | 企业外部接口适配，当前为 Skill Hub |
 | `migrations/` | Alembic 数据库迁移 |
 | `tests/` | API、隔离、幂等、事件流、Worker 与迁移的行为验证 |
 | `infra/` | 开发部署配置与未来的工具沙箱配置 |

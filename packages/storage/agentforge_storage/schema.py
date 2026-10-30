@@ -1,7 +1,7 @@
 import sqlalchemy as sa
 
 metadata = sa.MetaData()
-SCHEMA_REVISION = "0003"
+SCHEMA_REVISION = "0005"
 
 agents = sa.Table(
     "agents",
@@ -121,5 +121,57 @@ attempts = sa.Table(
     sa.UniqueConstraint("run_id", "number", name="uq_attempts_number"),
     sa.CheckConstraint(
         "status IN ('running','succeeded','failed','cancelled','expired')", name="ck_attempt_status"
+    ),
+)
+
+tool_calls = sa.Table(
+    "tool_calls",
+    metadata,
+    sa.Column("tool_call_id", sa.String(36), primary_key=True),
+    sa.Column("run_id", sa.String(36), sa.ForeignKey("runs.run_id"), nullable=False),
+    sa.Column(
+        "attempt_id", sa.String(36), sa.ForeignKey("run_attempts.attempt_id"), nullable=False
+    ),
+    sa.Column("sequence", sa.Integer, nullable=False),
+    sa.Column("call_id", sa.String(128), nullable=False),
+    sa.Column("name", sa.String(64), nullable=False),
+    sa.Column("version", sa.Integer, nullable=False),
+    sa.Column("arguments", sa.JSON, nullable=False),
+    sa.Column("arguments_hash", sa.String(64), nullable=False),
+    sa.Column("status", sa.String(16), nullable=False),
+    sa.Column("output", sa.JSON),
+    sa.Column("content", sa.Text),
+    sa.Column("error_code", sa.String(64)),
+    sa.Column("started_at", sa.Float, nullable=False),
+    sa.Column("finished_at", sa.Float),
+    sa.UniqueConstraint("attempt_id", "call_id", name="uq_tool_attempt_call"),
+    sa.UniqueConstraint("run_id", "sequence", name="uq_tool_run_sequence"),
+    sa.CheckConstraint(
+        "status IN ('running','succeeded','failed','abandoned')", name="ck_tool_status"
+    ),
+)
+
+skill_installations = sa.Table(
+    "skill_installations",
+    metadata,
+    sa.Column("installation_id", sa.String(36), primary_key=True),
+    sa.Column("tenant_id", sa.String(128), nullable=False),
+    sa.Column("space_id", sa.String(128), nullable=False),
+    sa.Column("user_id", sa.String(128), nullable=False),
+    sa.Column("source_id", sa.String(68), nullable=False),
+    sa.Column("skill_id", sa.String(64), nullable=False),
+    sa.Column("version", sa.Integer, nullable=False),
+    sa.Column("sha256", sa.String(64), nullable=False),
+    sa.Column("manifest", sa.JSON, nullable=False),
+    sa.Column("enabled", sa.Boolean, nullable=False),
+    sa.Column("installed_at", sa.Float, nullable=False),
+    sa.UniqueConstraint(
+        "tenant_id",
+        "space_id",
+        "user_id",
+        "source_id",
+        "skill_id",
+        "version",
+        name="uq_skill_installation_scope_version",
     ),
 )

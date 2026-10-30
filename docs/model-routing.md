@@ -16,7 +16,7 @@ Worker 领取任务 → 检查执行租约 → 请求模型 → 记录模型用�
 | `apps/worker/agentforge_worker/main.py` | 按环境配置创建、注入并关闭模型客户端 |
 | `packages/storage/agentforge_storage/repository.py` | 按有效租约记录模型事件与任务结果 |
 
-当前仅允许 `example_report` 工具，参数为 `{"text":"需要整理的文本"}`。工具把文本包装为报告草稿，结果回传模型用于最终回答；它不访问网络、不执行命令、不创建文件，也不进行事实核验。其他工具及企业系统接入按后续阶段实现。
+当前默认选择 `example_report@1` 工具，也可为 Agent 选择 `text_stats@1` 或空工具列表，详见 [版本化工具](tools.md)。报告工具的参数为 `{"text":"需要整理的文本"}`。工具把文本包装为报告草稿，结果回传模型用于最终回答；它不访问网络、不执行命令、不创建文件，也不进行事实核验。已绑定 Skill 时额外提供内部 skill_read，按需读取本次快照，见 [Skill 安装](skills.md)。其他业务工具及企业系统接入按后续阶段实现。
 
 ## 配置
 
@@ -37,7 +37,7 @@ AGENTFORGE_MODEL_MAX_COMPLETION_TOKENS=2048
 填入实际地址、模型名和本地密钥后才能请求真实路由；不要提交密钥。模板 `.env.example` 默认保留 `mock` 和空模型配置。真实模式配置缺失或无效时，在领取任务前报错，不自动回退到模拟结果。
 
 - `BASE_URL` 是接口前缀，不含 `/chat/completions`；客户端会自动追加此路径。
-- 请求使用 Bearer 认证、`messages`、`tools`、`tool_choice=auto`、`n=1`、`stream=false` 和 `max_completion_tokens`。路由与所选模型需要支持这些字段和工具调用。
+- 请求使用 Bearer 认证、`messages`、`tools`、`tool_choice=auto`、`n=1`、`stream=false` 和 `max_completion_tokens`。路由与所选模型需要支持这些字段和工具调用。工具列表为空时省略 tools 与 tool_choice。
 - 地址不能包含账号密码、查询参数或 fragment。生产路由应使用 HTTPS；HTTP 只适合明确受控的开发或内网环境。
 - 客户端不跟随重定向、不自动重试、不继承环境代理配置。需要代理或特殊认证时应通过明确的适配实现。
 - 连接、读写等网络阶段超时默认为 30 秒，允许 `(0, 120]`；响应读取循环也检查累计时间。同步网络 I/O 受各阶段超时约束，不承诺严格的单请求总耗时上限。
@@ -80,11 +80,14 @@ uv run --env-file .env --locked agentforge-worker --once
 | `model_limit_exceeded` | 达到轮次、上下文、响应大小或生成长度限制 |
 | `tool_not_allowed` | 请求了未授权工具 |
 | `tool_invalid_arguments` | 参数类型、字段、长度或内容不符合工具定义 |
+| `tool_execution_failed` | 工具执行异常 |
+| `tool_invalid_result` | 工具结果不符合契约或大小限制 |
+| `tool_call_conflict` | 同一执行尝试中的调用标识冲突 |
 | `model_configuration_mismatch` | Worker 路由或注入的 Harness 与快照不匹配 |
 | `execution_config_missing` | 升级前的任务缺少可验证执行配置 |
 | `execution_failed` | 其他执行异常 |
 
-任务仍使用既有 `failed` 状态与 `error_code` 字段；会话与快照阶段新增迁移 `0003`。上游错误正文不会写入任务结果或日志。已明确失败的任务不自动重发 HTTP 请求，需要重新执行时提交新任务；幂等键复用规则保持不变。
+任务仍使用既有 `failed` 状态与 `error_code` 字段；会话与快照阶段新增迁移 `0003`，工具记录阶段新增 `0004`。上游错误正文不会写入任务结果或日志。已明确失败的任务不自动重发 HTTP 请求，需要重新执行时提交新任务；幂等键复用规则保持不变。
 
 ## 取消与恢复边界
 
@@ -125,3 +128,5 @@ Worker 按 Run 快照选择模型和限制，使用本地当前凭据。更换�
 消息历史、版本更新和升级行为见 [Agent 与会话](conversations.md)。本阶段仍无 token 流、长期记忆或外部业务工具。
 
 加入会话与快照后的完整回归为 SQLite 167 项通过、5 项跳过，PostgreSQL 172 项通过。详见 [集成测试记录](postgresql-testing.md)。
+
+工具框架阶段回归：SQLite 196 项通过、5 项跳过；PostgreSQL 201 项通过。工具执行路径与查询接口见 [版本化工具](tools.md)。

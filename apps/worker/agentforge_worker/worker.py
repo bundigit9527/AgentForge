@@ -8,10 +8,13 @@ from agentforge_runtime.chat_harness import configured_harness
 from agentforge_runtime.chat_model import RuntimeFailure
 from agentforge_runtime.config import ModelSettings
 from agentforge_runtime.harness import ExecutionStopped, Harness
+from agentforge_runtime.skill_tools import SKILL_READ, with_skill_reader
+from agentforge_runtime.tools import BUILTIN_TOOLS, DEFAULT_TOOLS, ToolExecutor, ToolRegistry
 from agentforge_storage.repository import RunRepository
 from sqlalchemy.exc import SQLAlchemyError
 
 from agentforge_worker.lease import LeaseHeartbeat
+from agentforge_worker.tools import RunToolJournal
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +28,15 @@ class Worker:
         lease_seconds: int = 60,
         heartbeat_interval: float | None = None,
         harness_factory=None,
+        tool_registry: ToolRegistry = BUILTIN_TOOLS,
+        allowed_tools: tuple[str, ...] = DEFAULT_TOOLS,
     ):
         interval = lease_seconds / 3 if heartbeat_interval is None else heartbeat_interval
         if lease_seconds < 1 or not math.isfinite(interval) or not 0 < interval < lease_seconds:
             raise ValueError("Heartbeat interval must be positive and shorter than the lease")
+        tool_registry.validate_allowlist(allowed_tools)
+        self.tool_registry = tool_registry
+        self.allowed_tools = allowed_tools
         self.repository = repository
         self.harness = harness
         self.harness_factory = harness_factory or (
@@ -49,6 +57,24 @@ class Worker:
                 snapshot = claim.run.execution_config
                 if snapshot is None:
                     raise RuntimeFailure(RunErrorCode.EXECUTION_CONFIG_MISSING)
+
+                def owns_execution():
+                    return not heartbeat.lost.is_set() and self.repository.owns_claim(claim)
+
+                registry = self.tool_registry
+                runtime_tools = snapshot.tools
+                runtime_allowed = self.allowed_tools
+                if snapshot.skills:
+                    registry = with_skill_reader(registry, snapshot.skills)
+                    runtime_tools = (*runtime_tools, SKILL_READ)
+                    runtime_allowed = (*runtime_allowed, SKILL_READ)
+                executor = ToolExecutor(
+                    runtime_tools,
+                    registry=registry,
+                    allowed=runtime_allowed,
+                    journal=RunToolJournal(self.repository, claim),
+                    checkpoint=owns_execution,
+                )
                 try:
                     runtime = (
                         nullcontext(self.harness)
@@ -62,9 +88,7 @@ class Worker:
                         raise RuntimeFailure(RunErrorCode.MODEL_CONFIGURATION_MISMATCH)
                     result = harness.execute(
                         claim.run.prompt,
-                        before_tool=lambda name: (
-                            not heartbeat.lost.is_set() and self.repository.record_tool(claim, name)
-                        ),
+                        before_tool=lambda _name: owns_execution(),
                         checkpoint=lambda: (
                             not heartbeat.lost.is_set() and self.repository.owns_claim(claim)
                         ),
@@ -74,6 +98,7 @@ class Worker:
                         ),
                         execution_config=snapshot,
                         context=claim.run.context,
+                        tool_executor=executor,
                     )
         except ExecutionStopped:
             logger.info("Execution stopped for run %s", claim.run.run_id)

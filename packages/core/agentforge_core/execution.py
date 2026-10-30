@@ -4,6 +4,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from agentforge_core.skills import SkillSnapshot
+from agentforge_core.tools import ToolReferences
+
 
 class ModelConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -32,7 +35,19 @@ class ExecutionSnapshot(BaseModel):
     harness_version: Literal[1] = 1
     model: ModelConfig = Field(default_factory=ModelConfig)
     instructions: str = Field(default="", max_length=10000)
-    tools: tuple[Literal["example_report@1"]] = ("example_report@1",)
+    tools: ToolReferences = ("example_report@1",)
+    skills: tuple[SkillSnapshot, ...] = Field(default=(), max_length=8)
+
+    @model_validator(mode="after")
+    def validate_skills(self):
+        identities = [(s.source_id, s.manifest.skill_id) for s in self.skills]
+        if len(set(identities)) != len(identities):
+            raise ValueError("Select only one version of each skill")
+        if sum(len(s.manifest.content) for s in self.skills) > 32000:
+            raise ValueError("Selected skill recipes exceed the context budget")
+        if any(not set(s.manifest.required_tools) <= set(self.tools) for s in self.skills):
+            raise ValueError("A selected skill requires tools not enabled on this Agent")
+        return self
 
 
 class ContextMessage(BaseModel):

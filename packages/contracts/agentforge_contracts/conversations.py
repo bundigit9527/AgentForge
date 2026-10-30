@@ -3,6 +3,8 @@ from uuid import UUID
 
 from agentforge_core.execution import ExecutionSnapshot
 from agentforge_core.models import RunStatus
+from agentforge_core.skills import SkillReference
+from agentforge_core.tools import ToolReferences
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -10,6 +12,8 @@ class CreateAgent(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     name: str = Field(min_length=1, max_length=128)
     instructions: str = Field(default="", max_length=10000)
+    tools: ToolReferences = ("example_report@1",)
+    skills: tuple[SkillReference, ...] = Field(default=(), max_length=8)
 
 
 class UpdateAgent(CreateAgent):

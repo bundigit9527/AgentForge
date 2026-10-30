@@ -25,10 +25,10 @@ def test_stream_replays_then_resumes_using_last_event_id(client, headers, reposi
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     assert response.headers["x-accel-buffering"] == "no"
-    assert re.findall(r"^id: (\d+)$", response.text, re.M) == ["1", "2", "3", "4"]
+    assert re.findall(r"^id: (\d+)$", response.text, re.M) == ["1", "2", "3", "4", "5"]
     resumed = client.get(f"{url}?after=1", headers={**headers, "Last-Event-ID": "2"})
-    assert re.findall(r"^id: (\d+)$", resumed.text, re.M) == ["3", "4"]
-    exhausted = client.get(url, headers={**headers, "Last-Event-ID": "4"})
+    assert re.findall(r"^id: (\d+)$", resumed.text, re.M) == ["3", "4", "5"]
+    exhausted = client.get(url, headers={**headers, "Last-Event-ID": "5"})
     assert exhausted.status_code == 204
 
 
@@ -61,6 +61,7 @@ def test_stream_delivers_events_created_after_subscription(repository, scope):
         "queued",
         "running",
         "tool_started",
+        "tool_completed",
         "succeeded",
     ]
 
@@ -110,7 +111,7 @@ def test_live_asgi_response_delivers_progress_without_a_network_server(
         return b"".join(message.get("body", b"") for message in messages).decode()
 
     output = asyncio.run(exercise())
-    assert re.findall(r"^id: (\d+)$", output, re.M) == ["1", "2", "3", "4"]
+    assert re.findall(r"^id: (\d+)$", output, re.M) == ["1", "2", "3", "4", "5"]
 
 
 def test_idle_stream_heartbeat_and_disconnect_release_generator(repository, scope):

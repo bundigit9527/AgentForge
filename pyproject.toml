@@ -30,6 +30,7 @@ agentforge-worker = "agentforge_worker.main:main"
 packages = [
     "agentforge_api", "agentforge_worker", "agentforge_core",
     "agentforge_contracts", "agentforge_storage", "agentforge_runtime",
+    "agentforge_skills", "agentforge_connectors",
 ]
 
 [tool.setuptools.package-dir]
@@ -39,6 +40,8 @@ agentforge_core = "packages/core/agentforge_core"
 agentforge_contracts = "packages/contracts/agentforge_contracts"
 agentforge_storage = "packages/storage/agentforge_storage"
 agentforge_runtime = "packages/runtime/agentforge_runtime"
+agentforge_skills = "packages/skills/agentforge_skills"
+agentforge_connectors = "packages/connectors/agentforge_connectors"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

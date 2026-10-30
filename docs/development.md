@@ -88,7 +88,7 @@ uv run --locked --offline pytest
 
 任务接口需要 Bearer 令牌。令牌只映射到服务端配置的一组开发身份，尚未实现企业登录、用户管理或团队共享授权。未配置令牌时任务接口返回 503；令牌无效返回 401；不存在或无权限的任务统一返回 404。重复取消已取消任务返回当前状态，取消已成功或失败的任务返回 409。
 
-任务尚未关联 Agent 目录、会话或工作流，默认使用模拟模型和内置示例工具；Worker 可显式配置 Chat Completions 模式，见 [大模型路由](model-routing.md)。使用提交去重键可以避免网络重试产生新任务；同一身份范围内复用键但改变任务内容会返回 409。事件分页和 SSE 接口并存，详细约定见 [任务执行协议](task-execution.md)。
+任务已关联版本化 Agent 和会话；工作流尚未实现。默认使用模拟模型和内置示例工具；Worker 可显式配置 Chat Completions 模式，见 [大模型路由](model-routing.md)。使用提交去重键可以避免网络重试产生新任务；同一身份范围内复用键但改变任务内容会返回 409。事件分页和 SSE 接口并存，详细约定见 [任务执行协议](task-execution.md)。
 
 ## 数据与恢复
 
@@ -119,7 +119,7 @@ docker --context colima compose --env-file .env -f infra/compose/compose.dev.yam
 uv run --env-file .env --locked alembic upgrade head
 ```
 
-第一条命令启动数据库并等待健康检查通过；第二条命令创建 `runs`、`run_events` 和 `alembic_version`。`.env.example` 内的数据库 URL 已与容器端口、账号和密码对应。若更改端口或密码，需同步修改 URL；密码包含特殊字符时，对 URL 内密码进行编码。终端中已有的同名环境变量可能覆盖 `.env`，执行迁移前应确认目标仍为本地开发库。
+第一条命令启动数据库并等待健康检查通过；第二条命令按迁移创建或升级任务、事件、Agent、会话、消息、Attempt、工具调用和 Skill 安装表。`.env.example` 内的数据库 URL 已与容器端口、账号和密码对应。若更改端口或密码，需同步修改 URL；密码包含特殊字符时，对 URL 内密码进行编码。终端中已有的同名环境变量可能覆盖 `.env`，执行迁移前应确认目标仍为本地开发库。
 
 开发数据库仅用于本机联调，模板密码不用于生产。官方镜像只在空数据目录中执行账号初始化；修改 `.env` 不会重置已有卷中的账号密码。正常停止并保留数据：
 
@@ -147,7 +147,7 @@ API、Worker 和迁移工具应指向同一目标数据库。容器中的 `local
 - 是否为 AgentForge 专用开发/测试库，以及可进行的迁移操作。
 - 连接账号、TLS/证书要求，以及当前电脑和 Ubuntu 服务器的网络可达性。
 
-初次接入优先使用已有实例上的 AgentForge 专用开发/测试库与账号。当前迁移使用连接的默认 schema，会创建 `runs`、`run_events`、`agents`、`agent_versions`、`threads`、`messages`、`run_attempts` 和 `alembic_version`；共享业务库下的独立 schema 尚未配置，需明确 schema 与权限后再适配。默认离线测试使用临时 SQLite；显式集成测试只读取独立测试连接变量，并把迁移及降级限定在每用例临时 schema，不能使用业务库运行。
+初次接入优先使用已有实例上的 AgentForge 专用开发/测试库与账号。当前迁移使用连接的默认 schema，会创建 `runs`、`run_events`、`agents`、`agent_versions`、`threads`、`messages`、`run_attempts`、`tool_calls`、`skill_installations` 和 `alembic_version`；共享业务库下的独立 schema 尚未配置，需明确 schema 与权限后再适配。默认离线测试使用临时 SQLite；显式集成测试只读取独立测试连接变量，并把迁移及降级限定在每用例临时 schema，不能使用业务库运行。
 
 数据库信息确认后，先检查连通性、版本及当前结构，再在指定开发/测试库执行 `uv run --locked alembic upgrade head`。该命令会修改数据库结构；应用启动和创建项目本身均不会自动执行它。不要将现有测试直接改为对共享业务库运行。
 
@@ -165,10 +165,16 @@ API 启动后通过 `/docs` 查看接口并设置 Bearer 令牌。提交任务�
 uv run --env-file .env --locked agentforge-worker --once
 ```
 
-`--once` 每次领取最多一个任务后退出。后续需要持续处理队列时可手动使用 `--watch`，支持租约续期和退出信号处理；本次没有启动常驻进程。完整参数与数据库 `0003` 升级说明见 [任务执行协议](task-execution.md)。
+`--once` 每次领取最多一个任务后退出。后续需要持续处理队列时可手动使用 `--watch`，支持租约续期和退出信号处理；本次没有启动常驻进程。完整参数与数据库 `0005` 升级说明见 [任务执行协议](task-execution.md)。
 
 实现参考：[FastAPI 测试文档](https://fastapi.tiangolo.com/tutorial/testing/)、[SQLAlchemy 事务文档](https://docs.sqlalchemy.org/en/20/core/connections.html)、[Alembic 迁移文档](https://alembic.sqlalchemy.org/en/latest/tutorial.html)。
 
 ## Agent 与会话调试
 
-新增 Agent、会话、消息和执行尝试接口，数据库需升级到 `0003`。按 [Agent 与会话](conversations.md) 的步骤验证两轮交流、版本固定、重复提交和恢复。旧版排队任务缺少执行快照时不会推测模型执行，需要重新提交。
+新增 Agent、会话、消息和执行尝试接口，数据库需升级到最新迁移（当前 `0005`）。按 [Agent 与会话](conversations.md) 的步骤验证两轮交流、版本固定、重复提交和恢复。旧版排队任务缺少执行快照时不会推测模型执行，需要重新提交。
+
+工具目录、选择版本、允许列表配置及调用记录接口见 [版本化工具](tools.md)。
+
+## 内置技能与 Skill Hub
+
+本地已有资料摘要、会议纪要、文本统计三个 Skill；无需连接广场即可通过 `/api/v1/skills` 查看并绑定 Agent。配置可选 Hub 后可浏览版本并显式安装；协议与完整手动步骤见 [Skill 与广场安装](skills.md)。当前无技能管理页面。

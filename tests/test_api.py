@@ -105,7 +105,12 @@ def test_event_cursor_resumes_without_duplicate_events(client, headers, reposito
     assert first["next_cursor"] == 1
     Worker(repository).run_once()
     second = client.get(f"/api/v1/runs/{run_id}/events?after=1", headers=headers).json()
-    assert [e["event_type"] for e in second["items"]] == ["running", "tool_started", "succeeded"]
+    assert [e["event_type"] for e in second["items"]] == [
+        "running",
+        "tool_started",
+        "tool_completed",
+        "succeeded",
+    ]
     empty = client.get(
         f"/api/v1/runs/{run_id}/events?after={second['next_cursor']}", headers=headers
     ).json()

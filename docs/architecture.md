@@ -1,8 +1,10 @@
 # AgentForge 项目架构
 
-状态：整体目标架构；已建立 Python 离线任务骨架。更新日期：2026-10-29。
+状态：整体目标架构；已有任务、会话、工具与 Skill 安装闭环。更新日期：2026-10-30。
 
 本文记录 AgentForge 的技术边界、模块职责和运行约束。README 提供项目概览；后续实现与接口设计以本文为架构基线，实施顺序见 [开发路线图](roadmap.md)。
+
+架构以 Rakazo 的模块职责和执行链路为基准，保持 Python 技术选型。具体映射和未完成能力见 [Rakazo 架构对齐](rakazo-alignment.md)。Skill 采用“内置与安装目录 → 按需 skill_read → 受控工具”，企业 Hub 安装为扩展；实现见 [Skill 与广场安装](skills.md)。
 
 ## 1. 已确定的设计方向
 
@@ -20,7 +22,7 @@
 
 “后端统一 Python”针对自研业务服务。Docker、PostgreSQL、浏览器和入口代理继续使用现有基础组件；前端构建工具也不属于 Python 后端。
 
-当前已有 Python API、单次 / 持续运行 Worker、模拟 / Chat Completions Harness、任务与事件存储及离线测试。已增加版本化 Agent、会话、消息、执行尝试和运行配置快照，行为见 [Agent 与会话](conversations.md)。已实现按身份范围隔离的提交去重、SSE 实时事件续传和后台租约续期。框架采用 FastAPI，数据访问和迁移采用 SQLAlchemy / Alembic；任务表兼任持久化队列。具体范围见 [开发入门](development.md) 和 [任务执行协议](task-execution.md)。
+当前已有 Python API、单次 / 持续运行 Worker、模拟 / Chat Completions Harness、任务与事件存储及离线测试。已增加版本化 Agent、会话、消息、执行尝试和运行配置快照，行为见 [Agent 与会话](conversations.md)。已有纯函数工具注册、允许列表和执行记录，详见 [版本化工具](tools.md)；企业认证与审批仍未实现。已实现按身份范围隔离的提交去重、SSE 实时事件续传和后台租约续期。框架采用 FastAPI，数据访问和迁移采用 SQLAlchemy / Alembic；任务表兼任持久化队列。具体范围见 [开发入门](development.md) 和 [任务执行协议](task-execution.md)。
 
 已提供仅包含 PostgreSQL 的本地开发 Compose 配置。Chat Completions 适配器、多轮工具调用和用量事件已实现，配置与边界见 [模型路由](model-routing.md)，真实企业路由待联调。完整企业认证、记忆、Supervisor、前端及应用部署文件仍未实现。下面的架构图描述整体目标，不能视为所有模块已经可运行；已有 SQLite 离线验证及 PostgreSQL 17.11 独立集成验证，生产容量、真实模型与外部业务仍需另外验收。
 
@@ -57,7 +59,12 @@ flowchart TB
     HARNESS --> MODEL["企业大模型路由"]
     HARNESS --> TOOLS["工具执行模块：权限、审批与幂等控制"]
     TOOLS --> CONNECTOR["企业业务连接器"]
-    CONNECTOR --> ASSETS["智能体HUB / Skill HUB / 业务 API"]
+    CONNECTOR --> ASSETS["企业业务 API"]
+    API --> SKILLS["Skill 目录与安装服务"]
+    SKILLS --> HUB["Skill Hub 连接器"] --> HUBSYS["Skill 广场"]
+    SKILLS --> PG
+    API --> AGENTCAT["Agent 资产连接器（规划）"] --> AGENTHUB["智能体广场"]
+    TOOLS --> READSKILL["skill_read：本次运行技能快照"]
     TOOLS --> SUPERVISOR["Python Supervisor"]
     SUPERVISOR --> SB1["独立 Computer 沙箱 A"]
     SUPERVISOR --> SB2["独立 Computer 沙箱 B"]
@@ -75,7 +82,8 @@ flowchart TB
 | Worker | Python Worker 容器 | 领取任务、并发控制、租约、超时、重试、取消和恢复 | 默认共享工作池，必须按运行上下文处理权限和配额 |
 | Harness | Worker 进程内模块 | 上下文选择、模型调用、工具循环、用量和运行检查点 | 通过工具执行模块发起操作，不直接绕过审批 |
 | Memory | Python 进程内模块 | 会话摘要、长期记忆、检索、修订和删除 | 每次访问都带授权范围，不能只依赖提示词隔离 |
-| Tool / Skill | Worker 进程内模块 | 参数验证、技能版本、权限检查、审批、工具结果与执行记录 | 业务 API 和沙箱操作均执行相同的授权规则 |
+| Skill | API 的资产服务与 Worker 的快照读取 | 内置目录、Hub 安装副本、版本固定和按需读取操作说明 | 正文不能授权工具，Hub 连接器不进入运行循环 |
+| Tool | Worker 进程内模块 | 参数验证、权限检查、审批、工具结果与执行记录 | 业务 API 和沙箱操作均执行相同的授权规则 |
 | Connector | Python 进程内模块 | 适配企业知识、资产、模型与业务接口 | 不扩大上游资源权限；传递或映射已授权身份 |
 | Supervisor | Python Supervisor 容器 | Computer 生命周期、命令与文件接口、画面通道和资源限额 | 唯一需要管理 Docker 的业务服务，仅提供内部受控接口 |
 | Computer | 动态 Docker 容器 | 脚本、浏览器、文档及文件处理 | 只挂载本隔离域的工作目录，不挂载 Docker socket 和平台凭据 |
@@ -163,7 +171,7 @@ sequenceDiagram
     Worker->>Worker: 装配授权范围内的上下文与记忆
     Worker->>Model: 请求下一步决策
     Model-->>Worker: 文本或工具调用
-    Worker->>Tool: 调用 Skill 与版本化参数
+    Worker->>Tool: 按 Skill 方法调用 Tool 与版本化参数
     Tool->>Tool: 验证权限、幂等键与执行标准
     opt 需要人工确认
         Tool->>Store: 保存待审批状态并释放执行占用
@@ -237,7 +245,7 @@ sequenceDiagram
 | --- | --- | --- |
 | 产品管理系统 | 产品资产、知识资料、向量索引、资源原始权限 | 通过连接器按身份检索并记录来源 |
 | 智能体广场 | Agent 定义、角色、版本和发布目录 | 将定义实例化为运行任务，记录使用版本 |
-| Skill 广场 | 技能目录、版本、输入输出及执行标准 | 工具注册、参数验证、授权执行和结果验收 |
+| Skill 广场 | 技能目录、版本、输入输出及执行标准 | 浏览、显式安装版本副本、Agent 绑定与按需读取；实际工具另行授权 |
 | 大模型路由 | 模型接入、路由策略、模型能力和上游访问 | 传递任务所需模型请求并记录运行用量 |
 | AGENT 桌面端 | 用户交互、任务入口、进度和人工确认 | 提供认证、任务、事件和沙箱访问接口 |
 
@@ -262,7 +270,7 @@ React 页面与 Electron 容器可继续沿用，但现有 Rakazo 客户端涉�
 
 ## 9. 拟定代码组织
 
-以下目录已创建骨架。API、Worker、contracts、core、runtime、storage 和 migrations 包含初始实现；其余模块保留职责说明，尚无实现。模块不因单独列出目录就必须成为独立部署服务。
+以下目录已创建骨架。API、Worker、contracts、core、runtime、storage、skills、connectors 和 migrations 包含实现；其余模块保留职责说明，尚无实现。模块不因单独列出目录就必须成为独立部署服务。
 
 ```text
 AgentForge/
@@ -298,7 +306,7 @@ AgentForge/
 └── LICENSE
 ```
 
-首版采用单一 Python 发行包，根目录 `pyproject.toml` 显式映射 `agentforge_api`、`agentforge_worker`、`agentforge_core`、`agentforge_contracts`、`agentforge_storage` 和 `agentforge_runtime`。前端目录暂为说明占位，后续代码继续使用 JavaScript / TypeScript。
+首版采用单一 Python 发行包，根目录 `pyproject.toml` 显式映射 `agentforge_api`、`agentforge_worker`、`agentforge_core`、`agentforge_contracts`、`agentforge_storage`、`agentforge_runtime`、`agentforge_skills` 和 `agentforge_connectors`。前端目录暂为说明占位，后续代码继续使用 JavaScript / TypeScript。
 
 ## 10. 迁移边界与待验证选型
 

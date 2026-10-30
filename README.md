@@ -15,6 +15,11 @@ AgentForge 致力于连接企业知识、业务工作流、Agent 和 Skill，让
 - [PostgreSQL 集成测试](docs/postgresql-testing.md)：独立测试库、临时 schema 隔离与可重复的验证步骤。
 - [大模型路由](docs/model-routing.md)：兼容接口配置、工具循环、用量事件与真实联调边界。
 - [Agent 与会话](docs/conversations.md)：Agent 版本、消息、执行配置快照、尝试记录及手动调试。
+- [版本化工具](docs/tools.md)：工具注册、允许列表、输入输出验证、执行记录和调试。
+- [Skill 与广场安装](docs/skills.md)：内置技能、HTTP Hub、版本安装与按需读取。
+- [Rakazo 架构对齐](docs/rakazo-alignment.md)：模块映射、已实现边界与后续差距。
+
+架构按 Rakazo 的 API → Worker / Harness → 受控工具 → Supervisor / Computer 职责边界推进；后两者尚未实现。Skill 沿用目录与 skill_read 按需读取模式，支持本地内置与广场安装副本。
 
 ## 当前可验证的闭环
 
@@ -91,7 +96,12 @@ flowchart TB
     MEMORY --> DB
     MEMORY --> RETRIEVAL["产品管理系统 / 知识库 / 向量检索"]
     HARNESS --> MODEL["企业大模型路由"]
-    CONNECTOR --> ASSETS["智能体广场 / Skill 广场 / 业务系统"]
+    CONNECTOR --> ASSETS["企业业务系统"]
+    API --> SKILLS["Skill 目录 / 安装服务"]
+    SKILLS --> HUB["Skill Hub 连接器"] --> HUBSYS["Skill 广场"]
+    SKILLS --> DB
+    API --> AGENTCAT["Agent 资产连接器（规划）"] --> AGENTHUB["智能体广场"]
+    TOOLS --> READSKILL["skill_read：本次运行技能快照"]
     SUPERVISOR --> SB1["独立 Docker 沙箱 A"]
     SUPERVISOR --> SB2["独立 Docker 沙箱 B"]
     SB1 --> FILES1[("独立工作目录 A")]
@@ -108,7 +118,8 @@ flowchart TB
 | Worker | 任务领取、并发控制、超时、重试、取消、租约与异常恢复 |
 | Agent Harness | 上下文组装、模型调用、工具循环、人工确认和执行状态管理 |
 | Memory | 会话摘要、用户与 Agent 记忆、检索、修订和删除 |
-| Tool / Skill | 技能描述、参数校验、版本、权限、审批、幂等和执行标准 |
+| Skill | 内置与已安装技能目录、版本快照、SKILL.md 操作方法与验收要求 |
+| Tool | 实际执行动作、参数校验、授权、调用记录及后续审批与幂等 |
 | Connector | 接入知识库、智能体与技能资产、模型路由及企业业务 API |
 | Supervisor | 创建、连接、停止和回收沙箱，管理资源配额及工作目录 |
 | Edge / Web | HTTPS 入口、静态资源、API 转发和长连接转发；业务代理由 Python 实现 |

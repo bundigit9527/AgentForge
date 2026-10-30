@@ -6,7 +6,7 @@
 
 `POST /api/v1/runs` 保留 `{"prompt":"生成报告"}`，也支持添加 `thread_id` 在已有会话中提交；同一会话只允许一个未结束任务，其他新请求返回 409。客户端可以额外发送 `Idempotency-Key` 请求头；取值为 1–128 个英文字母、数字或 `._:-` 字符。
 
-- 同一租户、空间、用户下，相同键与相同 prompt、thread_id返回同一个 `run_id`，不再创建任务或入队事件。
+- 同一租户、空间、用户下，相同键与相同 prompt、thread_id 返回同一个 `run_id`，不再创建任务或入队事件。
 - 返回体反映任务的当前状态；首次提交和匹配的重试均返回 HTTP 201。
 - 同一键被用于不同任务内容时返回 HTTP 409。
 - 不同租户、空间或用户可以独立使用相同键，不会访问彼此的任务。
@@ -59,10 +59,14 @@ uv run --env-file .env --locked agentforge-worker --watch
 
 ## 数据库升级与验证范围
 
-迁移 `0002` 增加提交去重；最新迁移 `0003` 增加 Agent、会话、消息、执行尝试和运行快照，不清空已有任务或事件。旧任务缺少快照的处理见 [Agent 与会话](conversations.md)。已有开发库后续需显式执行：
+迁移 `0002` 增加提交去重；迁移 `0003` 增加 Agent、会话、消息、执行尝试和运行快照，不清空已有任务或事件；迁移 `0004` 增加工具调用记录；最新迁移 `0005` 增加 Skill 安装副本。旧任务缺少快照的处理见 [Agent 与会话](conversations.md)。已有开发库后续需显式执行：
 
 ```bash
 uv run --env-file .env --locked alembic upgrade head
 ```
 
 `/health/ready` 会检查数据库迁移版本，旧结构返回 503。任务行为及迁移已通过 SQLite 离线测试与独立 PostgreSQL 17.11 集成测试；测试使用临时 schema，不连接外部业务库。Worker 在测试进程中执行，常驻进程及真实模型联调仍需单独验收。步骤见 [PostgreSQL 集成测试](postgresql-testing.md)。
+
+## 工具执行事件
+
+工具现在记录 `tool_started`、`tool_completed` 和 `tool_failed`。事件序号仍单调递增，客户端不应假定固定的最终序号。参数、结果、状态查询及恢复边界见 [版本化工具](tools.md)。

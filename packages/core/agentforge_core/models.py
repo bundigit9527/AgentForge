@@ -26,6 +26,9 @@ class RunErrorCode(StrEnum):
     MODEL_LIMIT_EXCEEDED = "model_limit_exceeded"
     TOOL_NOT_ALLOWED = "tool_not_allowed"
     TOOL_INVALID_ARGUMENTS = "tool_invalid_arguments"
+    TOOL_EXECUTION_FAILED = "tool_execution_failed"
+    TOOL_INVALID_RESULT = "tool_invalid_result"
+    TOOL_CALL_CONFLICT = "tool_call_conflict"
     EXECUTION_CONFIG_MISSING = "execution_config_missing"
     MODEL_CONFIGURATION_MISMATCH = "model_configuration_mismatch"
 

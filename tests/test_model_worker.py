@@ -27,10 +27,11 @@ def test_model_tool_loop_persists_usage_and_resumable_events(client, headers, re
         "running",
         "model_completed",
         "tool_started",
+        "tool_completed",
         "model_completed",
         "succeeded",
     ]
-    assert [event.sequence for event in events] == list(range(1, 7))
+    assert [event.sequence for event in events] == list(range(1, 8))
     assert events[2].data == {
         "attempt": 1,
         "step": 1,
