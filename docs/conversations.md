@@ -1,6 +1,6 @@
 # Agent、会话与执行快照
 
-本阶段增加版本化 Agent、持久化会话和消息、执行尝试，以及提交时确定的运行配置。认证仍为开发令牌；长期记忆、企业登录、工具审批和 Docker 执行尚未实现。
+本阶段增加版本化 Agent、持久化会话和消息、执行尝试，以及提交时确定的运行配置。已支持本地身份、空间角色和显式共享，详见 [身份与权限](identity.md)；长期记忆、企业登录、工具审批和 Docker 执行尚未实现。
 
 ## 数据关系
 
@@ -34,16 +34,16 @@ Worker 的默认模型或限制改变时，已有任务仍使用快照。密钥�
 
 ## 接口
 
-所有接口沿用 Bearer 认证，租户、空间、用户由服务端解析，其他范围的资源统一返回 404。
+所有接口沿用 Bearer 认证，租户、空间、用户由服务端解析，未获授权的资源统一返回 404；空间共享可授予读取或使用，更新 Agent 和向会话提交仍要求所有者及可写角色。
 
 | 方法与路径 | 请求 / 用途 |
 | --- | --- |
 | `POST /api/v1/agents` | `{"name":"报告助手","instructions":"用中文整理资料"}` |
 | `PUT /api/v1/agents/{id}` | 同创建字段，另加 `expected_version`；创建新版本 |
 | `GET /api/v1/agents/{id}?version=1` | 查看指定版本；省略 version 查看最新 |
-| `GET /api/v1/agents?offset=0&limit=100` | 当前身份的 Agent 列表 |
+| `GET /api/v1/agents?offset=0&limit=100` | 当前身份有权读取的 Agent 列表 |
 | `POST /api/v1/threads` | `{"agent_id":"UUID","title":"资料分析"}` |
-| `GET /api/v1/threads?offset=0&limit=100` | 当前身份的会话列表 |
+| `GET /api/v1/threads?offset=0&limit=100` | 当前身份有权读取的会话列表 |
 | `GET /api/v1/threads/{id}` | 绑定的 Agent 版本及 active_run_id |
 | `POST /api/v1/runs` | `{"thread_id":"UUID","prompt":"请整理资料"}`；不传 thread_id 保持独立任务用法 |
 | `GET /api/v1/threads/{id}/messages?after=0&limit=100` | 消息及 run_status，返回 next_cursor |
@@ -55,7 +55,7 @@ Agent / 会话列表按创建时间、ID 排序，以 offset 分页；消息与�
 
 先按 [开发入门](development.md) 配置本地数据库和开发令牌；这份说明不会自动启动服务。
 
-1. 执行 `uv run --env-file .env --locked alembic upgrade head` 升级到最新迁移（当前 `0005`）。
+1. 执行 `uv run --env-file .env --locked alembic upgrade head` 升级到最新迁移（当前 `0007`）。
 2. 按开发入门启动 API，访问 `http://127.0.0.1:8000/docs`，用开发 Bearer 令牌授权。
 3. 创建 Agent，记录 agent_id；创建会话，记录 thread_id。
 4. 向会话提交第一条 Run，执行 `uv run --env-file .env --locked agentforge-worker --once`，查询消息，预期为一条用户消息和一条助手回复。
@@ -74,4 +74,8 @@ Agent / 会话列表按创建时间、ID 排序，以 offset 分页；消息与�
 
 ## Skill 绑定
 
-Agent 创建和完整更新可提交 `skills` 引用列表，默认空列表。服务端解析内置或当前身份已安装的指定版本，保存完整内容与摘要；Run 沿用 Agent 的技能快照。Harness 先提供目录，模型通过 `skill_read` 读取正文。新版本安装或卸载目录项不会改写既有快照；选用新版需更新 Agent 并创建新会话。详情见 [Skill 安装](skills.md)。
+Agent 创建和完整更新可提交 `skills` 引用列表，默认空列表。服务端解析内置或当前身份有权使用的已安装版本，保存完整内容与摘要；Run 沿用 Agent 的技能快照。Harness 先提供目录，模型通过 `skill_read` 读取正文。新版本安装或卸载目录项不会改写既有快照；选用新版需更新 Agent 并创建新会话。详情见 [Skill 安装](skills.md)。
+
+## Rakazo oRPC 会话映射
+
+兼容层按“租户 + 空间 + 用户 + Agent”使用独立、固定的 RPC 会话；不会任意选择已有 REST 会话，也不会将共享 Agent 所有者的聊天交给借用者。RPC 创建的会话和 Run 可通过 REST 查询。已有会话继续固定 Agent 版本，`bots.update` 不改变其版本；`threads.clear` / 新会话切换尚未接入。协议、分页和事件详见 [oRPC 接入](rakazo-orpc.md)。

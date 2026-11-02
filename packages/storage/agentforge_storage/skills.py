@@ -6,6 +6,7 @@ from agentforge_core.models import RunConflict, RunNotFound
 from agentforge_core.skills import SkillManifest, SkillSnapshot
 from sqlalchemy.exc import IntegrityError
 
+from agentforge_storage.authorization import Authorization
 from agentforge_storage.conversations import scoped
 from agentforge_storage.schema import skill_installations
 
@@ -21,9 +22,10 @@ def snapshot(row):
 
 
 class SkillRepository:
-    def __init__(self, engine, clock):
+    def __init__(self, engine, clock, *, auth_mode="development"):
         self.engine = engine
         self.clock = clock
+        self.authorization = Authorization(auth_mode)
 
     def install(self, scope, source_id, manifest, digest):
         identity = sa.and_(
@@ -35,6 +37,7 @@ class SkillRepository:
         for attempt in range(2):
             try:
                 with self.engine.begin() as connection:
+                    self.authorization.require(connection, scope, write=True)
                     existing = (
                         connection.execute(sa.select(skill_installations).where(identity))
                         .mappings()
@@ -66,10 +69,13 @@ class SkillRepository:
 
     def get(self, scope, installation_id):
         with self.engine.connect() as connection:
+            self.authorization.require(connection, scope)
             row = (
                 connection.execute(
                     sa.select(skill_installations).where(
-                        scoped(skill_installations, scope),
+                        self.authorization.visible(
+                            skill_installations, scope, "skill", "installation_id"
+                        ),
                         skill_installations.c.installation_id == installation_id,
                         skill_installations.c.enabled.is_(True),
                     )
@@ -83,11 +89,15 @@ class SkillRepository:
 
     def list(self, scope, offset, limit):
         with self.engine.connect() as connection:
+            self.authorization.require(connection, scope)
             rows = (
                 connection.execute(
                     sa.select(skill_installations)
                     .where(
-                        scoped(skill_installations, scope), skill_installations.c.enabled.is_(True)
+                        self.authorization.visible(
+                            skill_installations, scope, "skill", "installation_id"
+                        ),
+                        skill_installations.c.enabled.is_(True),
                     )
                     .order_by(
                         skill_installations.c.installed_at, skill_installations.c.installation_id
@@ -102,6 +112,7 @@ class SkillRepository:
 
     def uninstall(self, scope, installation_id):
         with self.engine.begin() as connection:
+            self.authorization.require(connection, scope, write=True)
             changed = connection.execute(
                 skill_installations.update()
                 .where(

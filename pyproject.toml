@@ -25,6 +25,7 @@ dev = ["pytest>=8,<10", "ruff>=0.11,<1"]
 
 [project.scripts]
 agentforge-worker = "agentforge_worker.main:main"
+agentforge-admin = "agentforge_api.admin:main"
 
 [tool.setuptools]
 packages = [

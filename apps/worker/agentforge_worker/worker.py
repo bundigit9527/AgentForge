@@ -113,6 +113,9 @@ class Worker:
         else:
             if not heartbeat.lost.is_set():
                 self.repository.finish(claim, result=result)
+        finally:
+            # Only a still-owned lease with revoked access can take this transition.
+            self.repository.finish(claim, failed=True, error_code=RunErrorCode.ACCESS_REVOKED)
         return True
 
     def run_forever(self, stop: Event, *, poll_interval: float = 1) -> None:

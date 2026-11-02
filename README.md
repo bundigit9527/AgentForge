@@ -17,6 +17,8 @@ AgentForge 致力于连接企业知识、业务工作流、Agent 和 Skill，让
 - [Agent 与会话](docs/conversations.md)：Agent 版本、消息、执行配置快照、尝试记录及手动调试。
 - [版本化工具](docs/tools.md)：工具注册、允许列表、输入输出验证、执行记录和调试。
 - [Skill 与广场安装](docs/skills.md)：内置技能、HTTP Hub、版本安装与按需读取。
+- [本地身份与权限](docs/identity.md)：空间成员、可撤销令牌、资源共享和双用户调试。
+- [Rakazo oRPC 接入](docs/rakazo-orpc.md)：Python 兼容入口、浏览器令牌登录、支持范围和手动联调。
 - [Rakazo 架构对齐](docs/rakazo-alignment.md)：模块映射、已实现边界与后续差距。
 
 架构按 Rakazo 的 API → Worker / Harness → 受控工具 → Supervisor / Computer 职责边界推进；后两者尚未实现。Skill 沿用目录与 skill_read 按需读取模式，支持本地内置与广场安装副本。
@@ -40,7 +42,7 @@ uv run --locked --offline ruff format --check .
 uv run --locked --offline pytest
 ```
 
-上述命令不启动服务。默认模型模式为 `mock`；已实现可配置的 Chat Completions 路由适配器、多轮工具调用及用量事件，通过模拟 HTTP 响应验证，真实企业路由仍待联调。首版认证只用于本地开发，长期记忆、Docker 沙箱和前端适配尚未实现。
+上述命令不启动服务。默认模型模式为 `mock`；已实现可配置的 Chat Completions 路由适配器、多轮工具调用及用量事件，通过模拟 HTTP 响应验证，真实企业路由仍待联调。已增加本地用户、空间角色、可撤销访问令牌和显式共享；默认仍为开发模式，多用户配置见 [本地身份与权限](docs/identity.md)。已增加 Rakazo 核心聊天的 oRPC 兼容入口与浏览器令牌会话，原版客户端互通及 Web 核心聊天已验证，保留全部原有业务入口，未接通功能显示错误；完整 Web 功能、企业单点登录、长期记忆和 Docker 沙箱仍待接入。
 
 ## 项目目标
 
@@ -178,7 +180,7 @@ AgentForge 通过适配器接入已有系统。以下为规划协作关系，不
 | 工具执行环境 | Docker 沙箱 |
 | 首阶段部署 | Ubuntu + Docker Compose |
 
-初版选用 FastAPI、SQLAlchemy、Alembic 和数据库任务队列，Harness 支持模拟模式和 Chat Completions 模式，工具仍限定为无外部副作用的内置报告工具。真实路由兼容性、队列扩容及企业认证在后续闭环中验证。
+初版选用 FastAPI、SQLAlchemy、Alembic 和数据库任务队列，Harness 支持模拟模式和 Chat Completions 模式，工具仍限定为无外部副作用的内置纯函数和技能说明读取。已有本地身份与空间授权；真实路由兼容性、队列扩容及企业登录在后续闭环中验证。
 
 生产部署目标为后台容器化、工具沙箱独立运行。数据库、记忆和工作文件使用持久化存储；测试与生产采用独立配置和数据。后续交付将包含版本固定、健康检查、备份、升级和恢复流程。
 

@@ -48,7 +48,7 @@ def main() -> None:
             engine = create_database(settings.database_url)
             resources.callback(engine.dispose)
             worker = Worker(
-                RunRepository(engine),
+                RunRepository(engine, auth_mode=settings.auth_mode),
                 harness_factory=lambda snapshot: configured_harness(
                     model_settings.for_snapshot(snapshot.model)
                 ),

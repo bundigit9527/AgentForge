@@ -1,14 +1,15 @@
 # 与 Rakazo 对齐的架构基线
 
-更新日期：2026-10-30。参考已核查的 Rakazo 本地版本 `d165de43`（2026-10-15）；不代表远程最新版本。
+更新日期：2026-11-02。参考已核查的 Rakazo 本地版本 `d165de43`（2026-10-15）；不代表远程最新版本。
 
-AgentForge 以 Rakazo 的服务职责、执行链路、资源边界和恢复语义作为参考，以 Python 实现后端。现有企业系统接入、资产版本快照和 MIT 项目方向保留；React / Electron 客户端仍需适配新接口。
+AgentForge 以 Rakazo 的服务职责、执行链路、资源边界和恢复语义作为参考，以 Python 实现后端。现有企业系统接入、资产版本快照和 MIT 项目方向保留；已选择 Python 后端兼容 Rakazo oRPC，保留原有 REST；React / Electron 的完整页面和能力入口仍需联调。
 
 ## 模块映射与现状
 
 | Rakazo 概念 | AgentForge 对应 | 当前状态 |
 | --- | --- | --- |
-| API / 身份与资源服务 | FastAPI / contracts / storage | 已实现开发身份与资源接口；企业成员授权待补 |
+| API / 身份与资源服务 | FastAPI / contracts / storage | 已实现本地身份、空间成员角色、令牌与显式共享；企业登录待接入 |
+| oRPC / Better Auth 客户端 | Python RPC 适配层 / 本地浏览器会话 | 原版客户端及 Web 核心聊天、令牌登录与退出已验证；密码 / SSO 和完整产品功能未验收 |
 | Worker / Run Executor | Python Worker / 任务存储 | 已有领取、续租、失效保护、Attempt；恢复语义待补齐 |
 | Pi AgentRuntime | Python Harness / ChatModel | 已有模型和工具循环；流式输出、压缩、检查点待补 |
 | Bot / Thread / Message | Agent / AgentVersion / Thread / Message | 已实现；版本固定为企业扩展 |
@@ -34,6 +35,8 @@ Rakazo 代码参考：`apps/worker/src/index.ts`、`packages/adapters/src/execut
 
 ## 明确保留的差异
 
+- `/rpc` 覆盖 bots 与 threads 的核心聊天子集，JSON / SSE 格式经过原版客户端验证；不等于复制全部 oRPC 功能或所有 Rakazo 产品接口。详情见 [兼容范围](rakazo-orpc.md)。
+- 当前 `taskId` 是 Run 的稳定兼容标识，不能据此宣称已有独立 Task；RPC 会话按用户隔离并固定 Agent 版本。
 - Python 技术栈；首版数据库任务表兼任队列，不为复刻 Graphile 引入另一套组件。
 - Agent 和运行配置固定版本；Hub 安装固定来源、版本和内容摘要。升级技能需要新 Agent 版本，旧会话不静默变更。
 - 当前先由 Agent 显式选择可见技能。Rakazo 还提供用户级目录、快捷指令、创建和编辑技能等体验，本轮不声称已覆盖。
@@ -42,7 +45,7 @@ Rakazo 代码参考：`apps/worker/src/index.ts`、`packages/adapters/src/execut
 
 ## 后续验收顺序
 
-1. 企业身份、空间成员与资源共享；以两个身份验证资源授权。完成企业模型路由联调。
+1. 核心聊天 oRPC 与浏览器令牌会话已实现。Web 核心聊天、登录、原有业务入口保留与未接通功能报错已验证。下一步明确版本更新后的新会话流程，再完成企业登录和真实模型路由联调；共享授权不替代外部业务审批。
 2. 审批暂停/恢复、外部操作记录与检查点；验证崩溃后不盲目重复业务操作。
 3. Supervisor / Docker Computer / 文件产物；验证授权工作目录、资源限制、取消与回收。
 4. 接入已有广场和知识系统，并增加 Task 与简单工作流步骤；完成“取资料 → 分析 → 报告 → 人工确认”。工作流在执行核心之上编排，不替换 Harness。

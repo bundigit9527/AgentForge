@@ -17,6 +17,7 @@ TERMINAL_STATUSES = {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED}
 
 class RunErrorCode(StrEnum):
     EXECUTION_FAILED = "execution_failed"
+    ACCESS_REVOKED = "access_revoked"
     MODEL_TIMEOUT = "model_timeout"
     MODEL_UNAVAILABLE = "model_unavailable"
     MODEL_AUTH_FAILED = "model_auth_failed"

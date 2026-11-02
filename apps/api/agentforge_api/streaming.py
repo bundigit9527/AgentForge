@@ -1,8 +1,13 @@
 import asyncio
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 
 from agentforge_contracts.runs import EventResponse
+from agentforge_core.identity import (
+    AuthenticationFailed,
+    AuthenticationUnavailable,
+    PermissionDenied,
+)
 from agentforge_core.models import TERMINAL_STATUSES, RunEvent, RunNotFound, Scope
 from agentforge_storage.repository import RunRepository
 from fastapi import Request
@@ -24,17 +29,20 @@ async def stream_events(
     *,
     poll_interval: float = 0.25,
     heartbeat_interval: float = 15,
+    authorize: Callable[[], bool] = lambda: True,
 ) -> AsyncIterator[str]:
     """Read durable events without keeping a database connection open while waiting."""
     cursor = after
     last_output = time.monotonic()
     while not await request.is_disconnected():
         try:
+            if not await run_in_threadpool(authorize):
+                raise AuthenticationFailed()
             # Read the state BEFORE events. A terminal state guarantees its final event
             # was committed already, so draining the next query cannot lose that event.
             run = await run_in_threadpool(repository.get, scope, run_id)
             batch = await run_in_threadpool(repository.list_events, scope, run_id, cursor, 100)
-        except RunNotFound:
+        except (RunNotFound, PermissionDenied, AuthenticationFailed, AuthenticationUnavailable):
             yield 'event: stream_error\ndata: {"code":"access_unavailable"}\n\n'
             return
         except SQLAlchemyError:
@@ -42,6 +50,16 @@ async def stream_events(
             return
         for event in batch:
             if await request.is_disconnected():
+                return
+            try:
+                if not await run_in_threadpool(authorize):
+                    raise AuthenticationFailed()
+                await run_in_threadpool(repository.get, scope, run_id)
+            except (RunNotFound, PermissionDenied, AuthenticationFailed, AuthenticationUnavailable):
+                yield 'event: stream_error\ndata: {"code":"access_unavailable"}\n\n'
+                return
+            except SQLAlchemyError:
+                yield 'event: stream_error\ndata: {"code":"storage_unavailable"}\n\n'
                 return
             yield encode_event(event)
             cursor = event.sequence

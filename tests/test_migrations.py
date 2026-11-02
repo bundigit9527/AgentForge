@@ -105,14 +105,14 @@ def test_tool_migration_preserves_conversation_run_and_config(engine, scope, cli
     from agentforge_worker.worker import Worker
 
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-    with engine.begin() as connection:
-        config.attributes["connection"] = connection
-        command.downgrade(config, "0003")
     repository = RunRepository(engine)
     conversations = ConversationRepository(engine, repository.clock)
     agent = conversations.create_agent(scope, "existing", ExecutionSnapshot(instructions="keep"))
     thread = conversations.create_thread(scope, agent["agent_id"], "existing conversation")
     run = repository.create(scope, "existing prompt", thread_id=thread["thread_id"])
+    with engine.begin() as connection:
+        config.attributes["connection"] = connection
+        command.downgrade(config, "0003")
     assert client.get("/health/ready").status_code == 503
     with engine.begin() as connection:
         config.attributes["connection"] = connection
@@ -131,13 +131,13 @@ def test_skill_migration_preserves_existing_run_and_tool_history(engine, scope, 
     from agentforge_worker.worker import Worker
 
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-    with engine.begin() as connection:
-        config.attributes["connection"] = connection
-        command.downgrade(config, "0004")
     repository = RunRepository(engine)
     run = repository.create(scope, "before skills")
     Worker(repository).run_once()
     existing_calls = repository.list_tool_calls(scope, run.run_id)
+    with engine.begin() as connection:
+        config.attributes["connection"] = connection
+        command.downgrade(config, "0004")
     assert client.get("/health/ready").status_code == 503
     with engine.begin() as connection:
         config.attributes["connection"] = connection
@@ -147,3 +147,88 @@ def test_skill_migration_preserves_existing_run_and_tool_history(engine, scope, 
     assert repository.list_tool_calls(scope, run.run_id) == existing_calls
     legacy = ExecutionSnapshot.model_validate({"version": 1, "harness_version": 1, "tools": []})
     assert legacy.skills == ()
+
+
+def test_identity_upgrade_preserves_legacy_resources_without_creating_accounts(
+    engine, scope, client
+):
+    from agentforge_core.execution import ExecutionSnapshot
+    from agentforge_storage.identity import IdentityRepository
+    from agentforge_storage.schema import identity_users, runs
+    from agentforge_storage.skills import SkillRepository
+    from agentforge_worker.worker import Worker
+
+    from tests.test_skills import recipe
+
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    repository = RunRepository(engine)
+    skill_store = SkillRepository(engine, repository.clock)
+    manifest = recipe()
+    skill = skill_store.install(scope, "hub:" + "a" * 64, manifest, manifest.digest())
+    run = repository.create(
+        scope, "before identity", execution_config=ExecutionSnapshot(skills=(skill,))
+    )
+    # Historical JSON did not contain the authorization mode.
+    historical = run.execution_config.model_dump(mode="json", exclude={"authorization_mode"})
+    with engine.begin() as connection:
+        connection.execute(
+            runs.update().where(runs.c.run_id == run.run_id).values(execution_config=historical)
+        )
+    Worker(repository).run_once()
+    calls = repository.list_tool_calls(scope, run.run_id)
+    with engine.begin() as connection:
+        config.attributes["connection"] = connection
+        command.downgrade(config, "0005")
+    assert client.get("/health/ready").status_code == 503
+    with engine.begin() as connection:
+        config.attributes["connection"] = connection
+        command.upgrade(config, "head")
+        assert (
+            connection.execute(sa.select(sa.func.count()).select_from(identity_users)).scalar_one()
+            == 0
+        )
+    assert client.get("/health/ready").status_code == 200
+    assert repository.get(scope, run.run_id).status == "succeeded"
+    assert repository.get(scope, run.run_id).execution_config.authorization_mode == "development"
+    assert repository.list_tool_calls(scope, run.run_id) == calls
+    assert skill_store.list(scope, 0, 10) == [skill]
+    IdentityRepository(engine).bootstrap(
+        scope, tenant_name="Existing", space_name="Existing", display_name="Owner"
+    )
+    secured = RunRepository(engine, auth_mode="database")
+    assert secured.get(scope, run.run_id).result == repository.get(scope, run.run_id).result
+
+
+def test_rpc_migration_backfills_messages_and_preserves_execution(engine, scope, client):
+    from agentforge_core.execution import ExecutionSnapshot
+    from agentforge_storage.conversations import ConversationRepository
+    from agentforge_storage.rakazo import RakazoRepository
+    from agentforge_worker.worker import Worker
+
+    repo = RunRepository(engine)
+    service = RakazoRepository(repo)
+    agent = ConversationRepository(engine, repo.clock).create_agent(
+        scope, "Existing", ExecutionSnapshot()
+    )
+    tid = service.ensure_thread(scope, agent["agent_id"])
+    first = repo.create(scope, "legacy message", thread_id=tid)
+    Worker(repo).run_once()
+    original = service.history(scope, agent["agent_id"])["messages"]
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    with engine.begin() as conn:
+        config.attributes["connection"] = conn
+        command.downgrade(config, "0006")
+    assert client.get("/health/ready").status_code == 503
+    with engine.begin() as conn:
+        config.attributes["connection"] = conn
+        command.upgrade(config, "head")
+    assert client.get("/health/ready").status_code == 200
+    historical = service.history(scope, agent["agent_id"])["messages"]
+    assert [(m["id"], m["blocks"]) for m in original] == [
+        (m["id"], m["blocks"]) for m in historical
+    ]
+    assert repo.get(scope, first.run_id).status == "succeeded"
+    second = service.send(scope, {"botId": agent["agent_id"], "text": "after upgrade"})
+    assert second["seq"] > historical[-1]["seq"]
+    Worker(repo).run_once()
+    assert len(service.snapshot(scope, agent["agent_id"])["messages"]) == 4

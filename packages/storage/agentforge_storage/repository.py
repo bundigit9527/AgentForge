@@ -11,7 +11,6 @@ from agentforge_core.models import (
     RunConflict,
     RunErrorCode,
     RunEvent,
-    RunNotFound,
     RunStatus,
     Scope,
 )
@@ -19,8 +18,10 @@ from agentforge_core.tools import ToolInvocation, ToolTicket
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from agentforge_storage.authorization import Authorization
 from agentforge_storage.conversations import agent_row, scoped, thread_row
 from agentforge_storage.schema import attempts, events, messages, runs, threads, tool_calls
+from agentforge_storage.thread_feed import project
 
 
 def _scope_filter(scope: Scope):
@@ -65,6 +66,8 @@ def _event(connection, row, event_type: str, data: dict) -> None:
             created_at=row["updated_at"],
         )
     )
+
+    project(connection, row, event_type, data)
 
 
 class _ExistingRun(Exception):
@@ -122,9 +125,12 @@ def _abandon_tool_calls(connection, row, reason):
 class RunRepository:
     """Durable database-backed queue for the offline, side-effect-free example."""
 
-    def __init__(self, engine: sa.Engine, clock: Callable[[], float] = time.time):
+    def __init__(
+        self, engine: sa.Engine, clock: Callable[[], float] = time.time, *, auth_mode="development"
+    ):
         self.engine = engine
         self.clock = clock
+        self.authorization = Authorization(auth_mode)
 
     def create(
         self,
@@ -164,6 +170,7 @@ class RunRepository:
 
         try:
             with self.engine.begin() as connection:
+                self.authorization.require(connection, scope, write=True)
                 previous = existing(connection)
                 if previous is not None:
                     return _run(previous)
@@ -190,13 +197,23 @@ class RunRepository:
                         .first()
                     )
                     if thread is None:
-                        thread_row(connection, scope, thread_id)
+                        thread_row(
+                            connection,
+                            scope,
+                            thread_id,
+                            authorization=self.authorization,
+                            owner_only=True,
+                        )
                         previous = existing(connection)
                         if previous is not None:
                             return _run(previous)
                         raise RunConflict("The conversation already has an active run")
                     agent = agent_row(
-                        connection, scope, thread["agent_id"], thread["agent_version"]
+                        connection,
+                        scope,
+                        thread["agent_id"],
+                        thread["agent_version"],
+                        authorization=self.authorization,
                     )
                     config = ExecutionSnapshot.model_validate(agent["execution_config"])
                     # Recent complete turns only: cancelled/failed prompts never masquerade
@@ -217,6 +234,10 @@ class RunRepository:
                         .all()
                     )
                     context = [dict(item) for item in reversed(history)]
+                config = config.model_copy(update={"authorization_mode": self.authorization.mode})
+                self.authorization.require_dependencies(
+                    connection, scope, config, thread["agent_id"] if thread else None
+                )
                 statement = insert(runs).values(
                     run_id=run_id,
                     tenant_id=scope.tenant_id,
@@ -263,14 +284,11 @@ class RunRepository:
     def get(self, scope: Scope, run_id: str) -> Run:
         with self.engine.connect() as connection:
             row = (
-                connection.execute(
-                    sa.select(runs).where(runs.c.run_id == run_id, _scope_filter(scope))
-                )
+                connection.execute(sa.select(runs).where(runs.c.run_id == run_id))
                 .mappings()
                 .first()
             )
-        if row is None:
-            raise RunNotFound()
+            self.authorization.check_row(connection, scope, "run", row)
         return _run(row)
 
     def list_events(
@@ -283,7 +301,9 @@ class RunRepository:
                     sa.select(events)
                     .join(runs, events.c.run_id == runs.c.run_id)
                     .where(
-                        _scope_filter(scope), events.c.run_id == run_id, events.c.sequence > after
+                        self.authorization.visible(runs, scope, "run", "run_id"),
+                        events.c.run_id == run_id,
+                        events.c.sequence > after,
                     )
                     .order_by(events.c.sequence)
                     .limit(limit)
@@ -295,6 +315,13 @@ class RunRepository:
 
     def cancel(self, scope: Scope, run_id: str) -> Run:
         with self.engine.begin() as connection:
+            self.authorization.require(connection, scope, write=True)
+            original = (
+                connection.execute(sa.select(runs).where(runs.c.run_id == run_id))
+                .mappings()
+                .first()
+            )
+            self.authorization.check_row(connection, scope, "run", original, owner_only=True)
             row = (
                 connection.execute(
                     runs.update()
@@ -412,13 +439,16 @@ class RunRepository:
                     return Claim(_run(row), attempt_id)
         return None
 
-    def _owned(self, claim: Claim, now: float):
+    def _owned(self, claim: Claim, now: float, *, revoked=False):
         return sa.and_(
             runs.c.run_id == claim.run.run_id,
             _scope_filter(claim.run.scope),
             runs.c.status == RunStatus.RUNNING.value,
             runs.c.attempt_id == claim.attempt_id,
             runs.c.lease_until > now,
+            ~self.authorization.execution_condition(claim.run)
+            if revoked
+            else self.authorization.execution_condition(claim.run),
         )
 
     def record_tool(self, claim: Claim, name: str) -> bool:
@@ -483,11 +513,12 @@ class RunRepository:
             raise ValueError("Expected a known run error code")
         now = self.clock()
         status = RunStatus.FAILED if failed else RunStatus.SUCCEEDED
+        revoked = failed and error_code == RunErrorCode.ACCESS_REVOKED
         with self.engine.begin() as connection:
             row = (
                 connection.execute(
                     runs.update()
-                    .where(self._owned(claim, now))
+                    .where(self._owned(claim, now, revoked=revoked))
                     .values(
                         status=status.value,
                         result=None if failed else result,
@@ -528,7 +559,10 @@ class RunRepository:
                 connection.execute(
                     sa.select(attempts)
                     .join(runs, attempts.c.run_id == runs.c.run_id)
-                    .where(_scope_filter(scope), attempts.c.run_id == run_id)
+                    .where(
+                        self.authorization.visible(runs, scope, "run", "run_id"),
+                        attempts.c.run_id == run_id,
+                    )
                     .order_by(attempts.c.number)
                 )
                 .mappings()
@@ -692,7 +726,7 @@ class RunRepository:
                     sa.select(tool_calls)
                     .join(runs, tool_calls.c.run_id == runs.c.run_id)
                     .where(
-                        _scope_filter(scope),
+                        self.authorization.visible(runs, scope, "run", "run_id"),
                         tool_calls.c.run_id == run_id,
                         tool_calls.c.sequence > after,
                     )

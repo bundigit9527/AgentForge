@@ -1,6 +1,6 @@
 # 开发入门
 
-当前提供 Python 后端骨架和离线任务闭环。代码已包含 API、单次 / 持续运行 Worker、模拟模型、内置报告工具、提交去重、数据库任务队列及 SSE 实时事件；模型适配器与工具循环已实现，真实企业路由待联调；企业登录、长期记忆、Docker 沙箱、Web 和桌面端尚未接入。
+当前提供 Python 后端骨架和离线任务闭环。代码已包含 API、单次 / 持续运行 Worker、模拟模型、内置报告工具、提交去重、数据库任务队列及 SSE 实时事件；模型适配器与工具循环已实现，真实企业路由待联调；已增加本地身份与空间权限，以及 Rakazo 核心聊天的 oRPC 后端兼容入口；企业登录、长期记忆、Docker 沙箱、完整 Web 页面和桌面端仍待联调或建设。
 
 ## 环境与安装
 
@@ -60,7 +60,7 @@ uv run --locked --offline pytest
 
 | 路径 | 当前内容 |
 | --- | --- |
-| `apps/api/agentforge_api/app.py` | FastAPI 应用工厂、开发认证、任务及事件接口 |
+| `apps/api/agentforge_api/app.py` | FastAPI 应用工厂、可替换身份解析、任务及事件接口 |
 | `apps/api/agentforge_api/streaming.py` | SSE 事件编码、续传、心跳与断线清理 |
 | `apps/worker/agentforge_worker/worker.py` | 领取并执行一个任务，保存结果或失败状态 |
 | `apps/worker/agentforge_worker/lease.py` | 后台租约续期与失效检测 |
@@ -86,7 +86,7 @@ uv run --locked --offline pytest
 | `GET /api/v1/runs/{run_id}/events?after=0&limit=100` | 按运行内单调游标读取已持久化事件 |
 | `GET /api/v1/runs/{run_id}/events/stream?after=0` | SSE 实时事件，支持 `Last-Event-ID` 续传 |
 
-任务接口需要 Bearer 令牌。令牌只映射到服务端配置的一组开发身份，尚未实现企业登录、用户管理或团队共享授权。未配置令牌时任务接口返回 503；令牌无效返回 401；不存在或无权限的任务统一返回 404。重复取消已取消任务返回当前状态，取消已成功或失败的任务返回 409。
+任务接口需要 Bearer 令牌。默认 development 模式令牌映射到服务端配置的一组开发身份；database 模式已有本地用户、空间角色和显式共享，见 [本地身份与权限](identity.md)。企业登录尚未实现。未配置令牌时任务接口返回 503；令牌无效返回 401；不存在或无权限的任务统一返回 404。重复取消已取消任务返回当前状态，取消已成功或失败的任务返回 409。
 
 任务已关联版本化 Agent 和会话；工作流尚未实现。默认使用模拟模型和内置示例工具；Worker 可显式配置 Chat Completions 模式，见 [大模型路由](model-routing.md)。使用提交去重键可以避免网络重试产生新任务；同一身份范围内复用键但改变任务内容会返回 409。事件分页和 SSE 接口并存，详细约定见 [任务执行协议](task-execution.md)。
 
@@ -165,16 +165,24 @@ API 启动后通过 `/docs` 查看接口并设置 Bearer 令牌。提交任务�
 uv run --env-file .env --locked agentforge-worker --once
 ```
 
-`--once` 每次领取最多一个任务后退出。后续需要持续处理队列时可手动使用 `--watch`，支持租约续期和退出信号处理；本次没有启动常驻进程。完整参数与数据库 `0005` 升级说明见 [任务执行协议](task-execution.md)。
+`--once` 每次领取最多一个任务后退出。后续需要持续处理队列时可手动使用 `--watch`，支持租约续期和退出信号处理；本次没有启动常驻进程。完整参数与数据库 `0007` 升级说明见 [任务执行协议](task-execution.md)。
 
 实现参考：[FastAPI 测试文档](https://fastapi.tiangolo.com/tutorial/testing/)、[SQLAlchemy 事务文档](https://docs.sqlalchemy.org/en/20/core/connections.html)、[Alembic 迁移文档](https://alembic.sqlalchemy.org/en/latest/tutorial.html)。
 
 ## Agent 与会话调试
 
-新增 Agent、会话、消息和执行尝试接口，数据库需升级到最新迁移（当前 `0005`）。按 [Agent 与会话](conversations.md) 的步骤验证两轮交流、版本固定、重复提交和恢复。旧版排队任务缺少执行快照时不会推测模型执行，需要重新提交。
+新增 Agent、会话、消息和执行尝试接口，数据库需升级到最新迁移（当前 `0007`）。按 [Agent 与会话](conversations.md) 的步骤验证两轮交流、版本固定、重复提交和恢复。旧版排队任务缺少执行快照时不会推测模型执行，需要重新提交。
 
 工具目录、选择版本、允许列表配置及调用记录接口见 [版本化工具](tools.md)。
 
 ## 内置技能与 Skill Hub
 
 本地已有资料摘要、会议纪要、文本统计三个 Skill；无需连接广场即可通过 `/api/v1/skills` 查看并绑定 Agent。配置可选 Hub 后可浏览版本并显式安装；协议与完整手动步骤见 [Skill 与广场安装](skills.md)。当前无技能管理页面。
+
+## 本地多用户调试
+
+默认 `AGENTFORGE_AUTH_MODE=development` 保留原有单用户步骤。使用 `database` 模式前，显式升级到最新迁移 `0007`（身份表始于 `0006`），通过 `agentforge-admin` 初始化空间、管理员和访问令牌。成员、共享与撤权的完整命令见 [本地身份与权限](identity.md)。API 与 Worker 使用一致的认证模式；切换配置不会自动创建账号或迁移资源所有者。
+
+## Rakazo Web 接入
+
+已选择后端兼容 oRPC：`/rpc` 与 REST 共用 Agent、会话、Run 和 Worker。先按 [Rakazo oRPC 接入](rakazo-orpc.md) 配置本地令牌登录、同源代理和数据库 `0007`；原版客户端协议及 Web 核心聊天页面已验证，全部原有业务入口和自动请求均保留，未接通功能显示错误；完整产品功能仍待建设。不会因加载 Web 而自动启动 Computer 或模型。

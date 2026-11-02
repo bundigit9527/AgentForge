@@ -117,6 +117,15 @@ docker --context colima compose --env-file .env.test.example -f infra/compose/co
 
 ## Skill 安装与 Rakazo 式按需读取验证（2026-10-30）
 
-- SQLite：231 项通过，5 项 PostgreSQL 专用用例跳过。
-- PostgreSQL 17.11：236 项通过；覆盖内置与安装目录、并发安装去重、版本摘要冲突、跨身份拒绝、卸载后的快照保留、skill_read 作用域及迁移 0005。
+- SQLite：266 项通过，5 项 PostgreSQL 专用用例跳过。
+- PostgreSQL 17.11：271 项通过；增加本地令牌、空间角色、显式共享、执行撤权、SSE 凭据复查、最后管理员并发保护及迁移 0006 的历史数据保留验证。
 - 模型与 Hub 使用 MockTransport，不访问真实服务。临时 schema 清理后计数为 0，专用测试容器和网络已移除，开发库不变。
+
+## oRPC 兼容里程碑验证记录（2026-11-02）
+
+- 启用 `AGENTFORGE_RAKAZO_ROOT` 的 SQLite 回归：304 项通过，5 项 PostgreSQL 专用测试跳过。
+- 独立 PostgreSQL 17.11：309 项全部通过；覆盖并发首次聊天、共享隔离、会话事件投影回滚和迁移 0007 消息回填。
+- 两种模式均包含 Rakazo 原版 oRPC 客户端 / Zod 契约及 Better Auth 客户端互通测试；默认未设置源码路径时，这两项会明确跳过。
+- Ruff 静态检查和 102 个 Python 文件的格式检查通过。测试仍有一条既有的 Starlette / httpx 弃用提示。
+- 测试 schema 残留为 0，专用容器与网络已清理，开发数据库未迁移；未启动常驻 API / Web / Worker。
+- 原版 Web 页面、真实模型、企业 SSO 和性能压测未验收。协议范围及手动步骤见 [Rakazo oRPC 接入](rakazo-orpc.md)。

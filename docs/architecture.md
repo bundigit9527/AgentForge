@@ -1,6 +1,6 @@
 # AgentForge 项目架构
 
-状态：整体目标架构；已有任务、会话、工具与 Skill 安装闭环。更新日期：2026-10-30。
+状态：整体目标架构；已有任务、会话、工具、Skill、本地身份及核心聊天 oRPC 兼容入口。更新日期：2026-11-02。
 
 本文记录 AgentForge 的技术边界、模块职责和运行约束。README 提供项目概览；后续实现与接口设计以本文为架构基线，实施顺序见 [开发路线图](roadmap.md)。
 
@@ -13,7 +13,7 @@
 | 产品定位 | 企业级、模块化、可私有化部署的 Agent 平台 |
 | 业务结构 | 知识库 → 工作流 → Agent → Skill → 执行标准 |
 | 后端语言 | API、Worker、Harness、记忆、连接器、沙箱管理及业务代理逻辑统一使用 Python |
-| 用户入口 | 保留 React / TypeScript 前端与 Electron 桌面端的技术路线，按新接口适配 |
+| 用户入口 | 保留 React / TypeScript 与 Electron；优先由 Python 后端兼容 Rakazo oRPC，页面按能力范围适配 |
 | 开发环境 | macOS 上 API / Worker 在本机 Python 环境运行，PostgreSQL 由 Colima 的 Docker 运行时承载 |
 | 生产部署 | Ubuntu 上使用 Docker Compose，后台容器化，工具在独立 Computer 沙箱运行 |
 | 持久化 | PostgreSQL 保存结构化状态；文件使用独立持久化存储 |
@@ -22,9 +22,11 @@
 
 “后端统一 Python”针对自研业务服务。Docker、PostgreSQL、浏览器和入口代理继续使用现有基础组件；前端构建工具也不属于 Python 后端。
 
-当前已有 Python API、单次 / 持续运行 Worker、模拟 / Chat Completions Harness、任务与事件存储及离线测试。已增加版本化 Agent、会话、消息、执行尝试和运行配置快照，行为见 [Agent 与会话](conversations.md)。已有纯函数工具注册、允许列表和执行记录，详见 [版本化工具](tools.md)；企业认证与审批仍未实现。已实现按身份范围隔离的提交去重、SSE 实时事件续传和后台租约续期。框架采用 FastAPI，数据访问和迁移采用 SQLAlchemy / Alembic；任务表兼任持久化队列。具体范围见 [开发入门](development.md) 和 [任务执行协议](task-execution.md)。
+当前已有 Python API、单次 / 持续运行 Worker、模拟 / Chat Completions Harness、任务与事件存储及离线测试。已增加版本化 Agent、会话、消息、执行尝试和运行配置快照，行为见 [Agent 与会话](conversations.md)。已有纯函数工具注册、允许列表和执行记录，详见 [版本化工具](tools.md)；本地用户、空间角色、可撤销令牌与显式空间共享已实现，见 [身份与权限](identity.md)；企业单点登录和审批仍未实现。已实现按身份范围隔离的提交去重、SSE 实时事件续传和后台租约续期。框架采用 FastAPI，数据访问和迁移采用 SQLAlchemy / Alembic；任务表兼任持久化队列。具体范围见 [开发入门](development.md) 和 [任务执行协议](task-execution.md)。
 
-已提供仅包含 PostgreSQL 的本地开发 Compose 配置。Chat Completions 适配器、多轮工具调用和用量事件已实现，配置与边界见 [模型路由](model-routing.md)，真实企业路由待联调。完整企业认证、记忆、Supervisor、前端及应用部署文件仍未实现。下面的架构图描述整体目标，不能视为所有模块已经可运行；已有 SQLite 离线验证及 PostgreSQL 17.11 独立集成验证，生产容量、真实模型与外部业务仍需另外验收。
+已提供仅包含 PostgreSQL 的本地开发 Compose 配置。Chat Completions 适配器、多轮工具调用和用量事件已实现，配置与边界见 [模型路由](model-routing.md)，真实企业路由待联调。企业单点登录、记忆、Supervisor、前端及应用部署文件仍未实现。下面的架构图描述整体目标，不能视为所有模块已经可运行；已有 SQLite 离线验证及 PostgreSQL 17.11 独立集成验证，生产容量、真实模型与外部业务仍需另外验收。
+
+新增 `/rpc` 为协议适配层，与 `/api/v1` 共用存储授权、事务和 Worker；浏览器登录会话兼容原版 Better Auth 客户端读取与退出，身份仍由 AgentForge 本地数据库验证。会话事件流跨多轮 Run 持久化，独立于 REST 的 Run 事件游标。当前只覆盖核心聊天，完整边界见 [oRPC 接入](rakazo-orpc.md)。
 
 ## 2. 业务架构
 
@@ -314,7 +316,7 @@ Rakazo 提供产品形态、运行链路和界面交互参考。现有 Pi 是 Ja
 
 | 待确定事项 | 验证依据 |
 | --- | --- |
-| FastAPI 企业认证与协议适配 | 现有开发认证仅映射固定身份，已提供 SSE 任务事件；待验证企业登录、前端适配与 WebSocket 代理 |
+| FastAPI 企业认证与协议适配 | 已有本地身份、空间角色、共享及 SSE 事件授权；待接入企业登录、前端适配与 WebSocket 代理 |
 | 数据库队列的生产调度 | 已有领取、续租、取消和持续消费；待验证 PostgreSQL 并发、真实长任务和容量 |
 | Python Agent 运行时 | 已有模拟 / Chat Completions 模式、工具循环及按轮次记录的用量；真实路由联调、审批、完整计费和检查点恢复待实现 |
 | SQLAlchemy / Alembic 的生产验证 | 已通过 SQLite 与 PostgreSQL 测试库的迁移、事务及应用层隔离验证；生产账号权限、备份恢复及升级流程仍待验证 |

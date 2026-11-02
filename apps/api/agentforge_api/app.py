@@ -1,4 +1,3 @@
-import secrets
 from contextlib import asynccontextmanager
 from typing import Annotated
 from uuid import UUID
@@ -15,10 +14,18 @@ from agentforge_contracts.conversations import (
     ThreadResponse,
     UpdateAgent,
 )
+from agentforge_contracts.identity import SetMember, SetVisibility
 from agentforge_contracts.runs import CreateRun, EventPage, EventResponse, RunResponse
 from agentforge_contracts.skills import InstallSkill, RemoteSkillPage, SkillPage
 from agentforge_contracts.tools import ToolCallPage, ToolCatalog
 from agentforge_core.execution import ExecutionSnapshot
+from agentforge_core.identity import (
+    AuthenticationFailed,
+    AuthenticationUnavailable,
+    IdentityProvider,
+    PermissionDenied,
+    ResourceKind,
+)
 from agentforge_core.models import TERMINAL_STATUSES, RunConflict, RunNotFound, Scope
 from agentforge_core.settings import Settings
 from agentforge_core.skills import (
@@ -34,6 +41,7 @@ from agentforge_runtime.tools import BUILTIN_TOOLS, allowed_tools_from_env
 from agentforge_skills.service import SkillService
 from agentforge_storage.conversations import ConversationRepository
 from agentforge_storage.database import create_database
+from agentforge_storage.identity import IdentityRepository
 from agentforge_storage.repository import RunRepository
 from agentforge_storage.schema import SCHEMA_REVISION
 from agentforge_storage.skills import SkillRepository
@@ -45,6 +53,9 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 
+from agentforge_api.auth import DevelopmentIdentityProvider
+from agentforge_api.browser_auth import mount_browser_auth
+from agentforge_api.orpc import mount_orpc
 from agentforge_api.streaming import stream_events
 
 bearer = HTTPBearer(auto_error=False)
@@ -54,14 +65,12 @@ def current_scope(
     request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
 ) -> Scope:
-    settings: Settings = request.app.state.settings
-    if not settings.dev_token:
-        raise HTTPException(503, "Local development authentication is not configured")
-    if credentials is None or not secrets.compare_digest(
-        credentials.credentials.encode(), settings.dev_token.encode()
-    ):
-        raise HTTPException(401, "Invalid credentials", headers={"WWW-Authenticate": "Bearer"})
-    return settings.dev_scope
+    provider = request.app.state.identity_provider
+    scope = provider.authenticate(credentials.credentials if credentials is not None else None)
+    store = request.app.state.repository
+    with store.engine.connect() as connection:
+        store.authorization.require(connection, scope)
+    return scope
 
 
 def repository(request: Request) -> RunRepository:
@@ -79,6 +88,7 @@ def create_app(
     model_settings: ModelSettings | None = None,
     allowed_tools: tuple[str, ...] | None = None,
     skill_hub: SkillHub | None = None,
+    identity_provider: IdentityProvider | None = None,
 ) -> FastAPI:
     configuration = settings or Settings.from_env()
     model_configuration = model_settings or ModelSettings.from_env(require_credentials=False)
@@ -92,6 +102,7 @@ def create_app(
             raise HTTPException(422, "Unknown or disallowed tool version") from None
         try:
             return ExecutionSnapshot(
+                authorization_mode=configuration.auth_mode,
                 model=model_configuration.snapshot(),
                 instructions=body.instructions,
                 tools=body.tools,
@@ -103,11 +114,29 @@ def create_app(
     owned_engine = (
         None if run_repository is not None else create_database(configuration.database_url)
     )
-    store = run_repository if run_repository is not None else RunRepository(owned_engine)
-
-    conversations = ConversationRepository(store.engine, store.clock)
+    store = (
+        run_repository
+        if run_repository is not None
+        else RunRepository(owned_engine, auth_mode=configuration.auth_mode)
+    )
+    if store.authorization.mode != configuration.auth_mode:
+        store = RunRepository(store.engine, store.clock, auth_mode=configuration.auth_mode)
+    if identity_provider is not None and configuration.auth_mode != "database":
+        raise ValueError("External identity providers require database authorization mode")
+    identities = IdentityRepository(store.engine, store.clock)
+    provider = identity_provider or (
+        identities
+        if configuration.auth_mode == "database"
+        else DevelopmentIdentityProvider(configuration)
+    )
+    conversations = ConversationRepository(
+        store.engine, store.clock, auth_mode=configuration.auth_mode
+    )
     owned_hub = HttpSkillHub(SkillHubSettings.from_env()) if skill_hub is None else None
-    skills = SkillService(SkillRepository(store.engine, store.clock), skill_hub or owned_hub)
+    skills = SkillService(
+        SkillRepository(store.engine, store.clock, auth_mode=configuration.auth_mode),
+        skill_hub or owned_hub,
+    )
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -122,6 +151,23 @@ def create_app(
     app = FastAPI(title="AgentForge", version="0.1.0", lifespan=lifespan)
     app.state.settings = configuration
     app.state.repository = store
+    app.state.identity_provider = provider
+
+    @app.exception_handler(AuthenticationFailed)
+    async def invalid_identity(_request, _error):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Invalid or expired credentials"},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    @app.exception_handler(AuthenticationUnavailable)
+    async def missing_identity(_request, _error):
+        return JSONResponse(status_code=503, content={"detail": "Authentication is not configured"})
+
+    @app.exception_handler(PermissionDenied)
+    async def forbidden(_request, _error):
+        return JSONResponse(status_code=403, content={"detail": "Insufficient permission"})
 
     @app.exception_handler(RunNotFound)
     async def missing(_request, _error):
@@ -167,11 +213,84 @@ def create_app(
                     "run_attempts",
                     "tool_calls",
                     "skill_installations",
+                    "identity_tenants",
+                    "identity_spaces",
+                    "identity_users",
+                    "identity_memberships",
+                    "identity_tokens",
+                    "resource_shares",
+                    "rpc_bot_profiles",
+                    "thread_event_heads",
+                    "thread_events",
+                    "browser_sessions",
                 ):
                     connection.execute(text(f"SELECT 1 FROM {table} LIMIT 0"))
         except SQLAlchemyError as exc:
             raise HTTPException(503, "Database schema is unavailable") from exc
         return {"status": "ok"}
+
+    @app.get("/api/v1/me")
+    def me(scope: ScopeDependency):
+        with store.engine.connect() as connection:
+            role = store.authorization.require(connection, scope)
+        return {
+            "tenant_id": scope.tenant_id,
+            "space_id": scope.space_id,
+            "user_id": scope.user_id,
+            "role": role,
+            "auth_mode": configuration.auth_mode,
+        }
+
+    def require_database_identity():
+        if configuration.auth_mode != "database":
+            raise PermissionDenied()
+
+    @app.get("/api/v1/members")
+    def members(
+        scope: ScopeDependency,
+        offset: Annotated[int, Query(ge=0)] = 0,
+        limit: Annotated[int, Query(ge=1, le=100)] = 100,
+    ):
+        require_database_identity()
+        return {"items": identities.list_members(scope, offset, limit)}
+
+    @app.put("/api/v1/members/{user_id}")
+    def set_member(
+        user_id: Annotated[str, Path(min_length=1, max_length=128)],
+        body: SetMember,
+        scope: ScopeDependency,
+    ):
+        require_database_identity()
+        if not user_id.strip():
+            raise HTTPException(422, "User identifier must not be blank")
+        return identities.set_member(scope, user_id, **body.model_dump())
+
+    @app.get("/api/v1/auth/tokens")
+    def list_tokens(scope: ScopeDependency):
+        require_database_identity()
+        return {"items": identities.list_tokens(scope)}
+
+    @app.delete("/api/v1/auth/tokens/{token_id}", status_code=204)
+    def revoke_token(token_id: UUID, scope: ScopeDependency):
+        require_database_identity()
+        identities.revoke_token(scope, str(token_id))
+        return Response(status_code=204)
+
+    @app.get("/api/v1/sharing/{kind}/{resource_id}")
+    def get_sharing(kind: ResourceKind, resource_id: UUID, scope: ScopeDependency):
+        with store.engine.connect() as connection:
+            visibility = store.authorization.visibility(connection, scope, kind, str(resource_id))
+        return {"visibility": visibility}
+
+    @app.put("/api/v1/sharing/{kind}/{resource_id}")
+    def set_sharing(
+        kind: ResourceKind, resource_id: UUID, body: SetVisibility, scope: ScopeDependency
+    ):
+        with store.engine.begin() as connection:
+            visibility = store.authorization.set_visibility(
+                connection, scope, kind, str(resource_id), body.visibility
+            )
+        return {"visibility": visibility}
 
     @app.get("/api/v1/skills", response_model=SkillPage)
     def list_skills(
@@ -208,6 +327,8 @@ def create_app(
 
     @app.post("/api/v1/skills/install", response_model=SkillSnapshot, status_code=201)
     def install_skill(body: InstallSkill, scope: ScopeDependency):
+        with store.engine.connect() as connection:
+            store.authorization.require(connection, scope, write=True)
         return skills.install(scope, body)
 
     @app.delete("/api/v1/skills/installations/{installation_id}", status_code=204)
@@ -232,11 +353,15 @@ def create_app(
 
     @app.post("/api/v1/agents", response_model=AgentResponse, status_code=201)
     def create_agent(body: CreateAgent, scope: ScopeDependency):
+        with store.engine.connect() as connection:
+            store.authorization.require(connection, scope, write=True)
         config = agent_configuration(body, scope)
         return conversations.create_agent(scope, body.name, config)
 
     @app.put("/api/v1/agents/{agent_id}", response_model=AgentResponse)
     def update_agent(agent_id: UUID, body: UpdateAgent, scope: ScopeDependency):
+        with store.engine.connect() as connection:
+            store.authorization.require(connection, scope, write=True)
         config = agent_configuration(body, scope)
         return conversations.update_agent(
             scope, str(agent_id), body.expected_version, body.name, config
@@ -302,6 +427,7 @@ def create_app(
                 idempotency_key,
                 thread_id=str(body.thread_id) if body.thread_id else None,
                 execution_config=ExecutionSnapshot(
+                    authorization_mode=configuration.auth_mode,
                     model=model_configuration.snapshot(),
                     tools=("example_report@1",) if "example_report@1" in tool_allowlist else (),
                 ),
@@ -351,9 +477,23 @@ def create_app(
             if not remaining:
                 return Response(status_code=204)
         return StreamingResponse(
-            stream_events(request, repo, scope, str(run_id), cursor),
+            stream_events(
+                request,
+                repo,
+                scope,
+                str(run_id),
+                cursor,
+                authorize=lambda: (
+                    provider.authenticate(
+                        request.headers.get("authorization", "").partition(" ")[2] or None
+                    )
+                    == scope
+                ),
+            ),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
         )
 
+    browser, authenticate = mount_browser_auth(app, configuration, store, identities, provider)
+    mount_orpc(app, store, model_configuration, tool_allowlist, browser, authenticate)
     return app

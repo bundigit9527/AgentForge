@@ -33,6 +33,7 @@ class ExecutionSnapshot(BaseModel):
 
     version: Literal[1] = 1
     harness_version: Literal[1] = 1
+    authorization_mode: Literal["development", "database"] = "development"
     model: ModelConfig = Field(default_factory=ModelConfig)
     instructions: str = Field(default="", max_length=10000)
     tools: ToolReferences = ("example_report@1",)
