@@ -7,7 +7,8 @@ from threading import BoundedSemaphore
 from typing import Annotated
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from agentforge_core.reports import Summary
+from pydantic import Field, TypeAdapter
 
 Integer = Annotated[int, Field(strict=True, ge=-(10**12), le=10**12)]
 Values = Annotated[list[Integer], Field(min_length=1, max_length=512)]
@@ -21,15 +22,6 @@ total = sum(values)
 print(json.dumps(dict(count=len(values), minimum=min(values), maximum=max(values),
                       total=total, mean=total / len(values))))
 """
-
-
-class Summary(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
-    count: int = Field(ge=1, le=512)
-    minimum: int
-    maximum: int
-    total: int
-    mean: float
 
 
 class DockerComputer:

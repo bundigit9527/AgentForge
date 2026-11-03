@@ -1,0 +1,1 @@
+{"servers":[{"server_id":"finance_news","tenant_id":"local","space_id":"development","users":["developer"],"url":"http://127.0.0.1:8767/mcp","allow_insecure_http":true,"token_env":"AGENTFORGE_MCP_NEWS_TOKEN","read_tools":{"latest_finance_news":1},"timeout_seconds":15}]}

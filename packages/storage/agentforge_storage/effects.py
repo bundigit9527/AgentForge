@@ -7,7 +7,9 @@ from uuid import uuid4
 import sqlalchemy as sa
 from agentforge_core.effects import EffectRequest, bounded_json
 from agentforge_core.models import TERMINAL_STATUSES, RunConflict, RunNotFound
+from agentforge_core.reports import CsvSummary, exports_csv
 
+from agentforge_storage.artifacts import save_csv
 from agentforge_storage.repository import _event, write_connection
 from agentforge_storage.schema import external_effects as effects
 from agentforge_storage.schema import runs
@@ -202,5 +204,16 @@ class ExternalEffectRepository:
                 .where(effects.c.effect_id == effect_id)
                 .values(status=status, result=result, updated_at=self.repository.clock())
             )
+            snapshot = claim.run.execution_config
+            if (
+                succeeded
+                and snapshot
+                and any(
+                    exports_csv(tool) and tool.reference == effect["request"]["tool_reference"]
+                    for tool in snapshot.mcp_tools
+                )
+            ):
+                report = CsvSummary.model_validate(json.loads(result["content"])["structured"])
+                save_csv(connection, run, effect_id, report.csv.encode("utf-8"))
             self._event(connection, run, effect_id, status)
             return self._find(connection, run["run_id"], effect_id)

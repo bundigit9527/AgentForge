@@ -18,8 +18,10 @@ class McpResult(BaseModel):
     structured: dict | None = None
 
 
-def definition(service, scope, snapshot, checkpoint):
-    service.check(scope, snapshot)
+def definition(service, scope, snapshot, checkpoint, bot_id=None):
+    binding = service.check(scope, snapshot).bot_id
+    if binding is not None and str(binding) != bot_id:
+        raise McpFailure("mcp_not_allowed")
     schema = deepcopy(snapshot.input_schema)
 
     class Arguments(RootModel[dict[str, Any]]):
@@ -55,8 +57,10 @@ def definition(service, scope, snapshot, checkpoint):
     )
 
 
-def with_mcp_tools(registry, service, scope, snapshots, checkpoint):
+def with_mcp_tools(registry, service, scope, snapshots, checkpoint, *, bot_id=None):
     try:
-        return registry.extended(definition(service, scope, item, checkpoint) for item in snapshots)
+        return registry.extended(
+            definition(service, scope, item, checkpoint, bot_id) for item in snapshots
+        )
     except McpFailure as exc:
         raise RuntimeFailure(RunErrorCode(exc.code)) from None

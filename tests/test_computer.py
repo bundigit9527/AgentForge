@@ -1,7 +1,10 @@
+import base64
 import json
 import os
 import subprocess
+from dataclasses import replace
 from unittest.mock import patch
+from uuid import uuid4
 
 import httpx
 import httpx2
@@ -9,7 +12,11 @@ import pytest
 from agentforge_api.app import create_app as create_api
 from agentforge_connectors.mcp import McpService
 from agentforge_connectors.mcp_config import McpServer, McpSettings
+from agentforge_core.models import RunNotFound
+from agentforge_core.reports import CsvSummary
 from agentforge_runtime.chat_harness import configured_harness
+from agentforge_storage.approvals import ApprovalRepository
+from agentforge_storage.artifacts import ArtifactRepository
 from agentforge_supervisor.app import create_app
 from agentforge_supervisor.computer import DockerComputer
 from agentforge_worker.worker import Worker
@@ -67,7 +74,14 @@ def test_operator_must_pin_image():
         DockerComputer("python:latest")
 
 
-def test_chat_approval_to_computer_and_back(monkeypatch, scope, settings, repository, headers):
+@pytest.mark.parametrize(
+    ("export", "crash"),
+    [(False, False), (True, False), (True, True)],
+    ids=["summary", "csv", "csv-recovery"],
+)
+def test_chat_approval_to_computer_and_back(
+    monkeypatch, scope, settings, repository, headers, clock, export, crash
+):
     # Set this explicit test variable only for a local Docker integration run.
     live_image = os.environ.get("AGENTFORGE_TEST_COMPUTER_IMAGE")
     monkeypatch.setenv("AGENTFORGE_COMPUTER_IMAGE", live_image or IMAGE)
@@ -93,6 +107,9 @@ def test_chat_approval_to_computer_and_back(monkeypatch, scope, settings, reposi
     if not live_image:
         monkeypatch.setattr(subprocess, "run", fake_docker)
     supervisor = create_app()
+    tool_name = "export_number_summary_csv" if export else "summarize_numbers"
+    csv_text = "count,minimum,maximum,total,mean\r\n3,-3,15,18,6.0\r\n"
+    expected = {**SUMMARY, "csv": csv_text} if export else SUMMARY
     config = McpServer(
         server_id="computer",
         tenant_id=scope.tenant_id,
@@ -101,7 +118,7 @@ def test_chat_approval_to_computer_and_back(monkeypatch, scope, settings, reposi
         url="http://127.0.0.1:8766/mcp",
         allow_insecure_http=True,
         token_env=TOKEN_ENV,
-        read_tools={"summarize_numbers": 1},
+        read_tools={tool_name: 1},
         timeout_seconds=20,
     )
     service = McpService(
@@ -119,7 +136,7 @@ def test_chat_approval_to_computer_and_back(monkeypatch, scope, settings, reposi
             return httpx.Response(
                 200, json=completion(None, [tool_call(name=name, arguments='{"values":[-3,6,15]}')])
             )
-        assert json.loads(body["messages"][-1]["content"])["structured"] == SUMMARY
+        assert json.loads(body["messages"][-1]["content"])["structured"] == expected
         return httpx.Response(200, json=completion("平均值为 6。"))
 
     with (
@@ -167,9 +184,75 @@ def test_chat_approval_to_computer_and_back(monkeypatch, scope, settings, reposi
             {"botId": bot, "runId": run_id, "messageId": card["id"], "answer": "allow"},
         )
         assert response.status_code == 200
+        assert (
+            rpc(
+                client,
+                headers,
+                "threads.answer",
+                {"botId": bot, "runId": run_id, "messageId": card["id"], "answer": "allow"},
+            ).status_code
+            == 200
+        )
+        if crash:
+
+            class SimulatedCrash(BaseException):
+                pass
+
+            original = ApprovalRepository.save
+
+            def interrupt_after_tool(self, claim, state):
+                if state["index"] == 1:
+                    raise SimulatedCrash()
+                original(self, claim, state)
+
+            with monkeypatch.context() as patcher:
+                patcher.setattr(ApprovalRepository, "save", interrupt_after_tool)
+                with pytest.raises(SimulatedCrash):
+                    worker.run_once()
+            clock.advance(61)
         assert worker.run_once()
         assert repository.get(scope, run_id).result == "平均值为 6。"
         audit = repository.list_tool_calls(scope, run_id)
-        assert len(audit) == 1 and audit[0]["output"]["structured"] == SUMMARY
+        assert len(audit) == 1 and audit[0]["output"]["structured"] == expected
         if not live_image:
             assert len(runs) == 1
+        page = rpc(client, headers, "artifacts.listSpace", {"botId": bot}).json()["json"]
+        if export:
+            assert len(page["items"]) == 1 and page["nextCursor"] is None
+            item = page["items"][0]
+            attachment = {"artifactId": item["id"]}
+            assert (
+                rpc(
+                    client, headers, "artifacts.get", {**attachment, "botId": str(uuid4())}
+                ).status_code
+                == 404
+            )
+            for method, target in [("artifacts.get", {"botId": bot}), ("artifacts.getById", {})]:
+                file = rpc(client, headers, method, {**target, **attachment}).json()["json"]
+                assert base64.b64decode(file["contentBase64"]) == csv_text.encode()
+                assert file["size"] == len(csv_text) and file["runId"] == run_id
+            assert (
+                rpc(client, headers, "artifacts.listVersions", {"familyId": item["id"]}).json()[
+                    "json"
+                ][0]["id"]
+                == item["id"]
+            )
+            messages = rpc(client, headers, "threads.get", {"botId": bot}).json()["json"][
+                "messages"
+            ]
+            assert [
+                b["artifactId"] for m in messages for b in m["blocks"] if b["kind"] == "file"
+            ] == [item["id"]]
+            for field in ("user_id", "space_id", "tenant_id"):
+                other = replace(scope, **{field: "other"})
+                store = ArtifactRepository(repository)
+                assert store.listing(other) == []
+                with pytest.raises(RunNotFound):
+                    store.get(other, item["id"])
+        else:
+            assert page["items"] == []
+
+
+def test_report_must_match_numeric_summary():
+    with pytest.raises(ValueError, match="CSV must match"):
+        CsvSummary(**SUMMARY, csv="=arbitrary()")

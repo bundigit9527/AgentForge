@@ -4,6 +4,7 @@ import hashlib
 import os
 from pathlib import Path
 from urllib.parse import urlsplit
+from uuid import UUID
 
 from agentforge_core.mcp import RemoteName, ServerId, canonical
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -15,6 +16,7 @@ class McpServer(BaseModel):
     tenant_id: str = Field(min_length=1, max_length=128)
     space_id: str = Field(min_length=1, max_length=128)
     users: tuple[str, ...] = Field(min_length=1, max_length=100)
+    bot_id: UUID | None = None
     url: str = Field(repr=False, max_length=2048)
     token_env: str = Field(default="", repr=False)
     read_tools: dict[RemoteName, int] = Field(min_length=1, max_length=16)

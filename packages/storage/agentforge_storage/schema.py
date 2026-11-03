@@ -1,7 +1,7 @@
 import sqlalchemy as sa
 
 metadata = sa.MetaData()
-SCHEMA_REVISION = "0013"
+SCHEMA_REVISION = "0014"
 
 agents = sa.Table(
     "agents",
@@ -416,4 +416,16 @@ approval_grants = sa.Table(
     sa.Column("space_id", sa.String(128), primary_key=True),
     sa.Column("user_id", sa.String(128), primary_key=True),
     sa.Column("tool_reference", sa.String(80), primary_key=True),
+)
+
+artifacts = sa.Table(
+    "run_artifacts",
+    metadata,
+    sa.Column(
+        "artifact_id", sa.String(36), sa.ForeignKey("external_effects.effect_id"), primary_key=True
+    ),
+    sa.Column("run_id", sa.String(36), sa.ForeignKey("runs.run_id"), nullable=False, index=True),
+    sa.Column("data", sa.LargeBinary(512), nullable=False),
+    sa.CheckConstraint("length(data) BETWEEN 1 AND 512", name="ck_run_artifacts_size"),
+    sa.Column("created_at", sa.Float, nullable=False),
 )

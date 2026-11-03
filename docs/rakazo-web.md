@@ -2,7 +2,7 @@
 
 策略：Rakazo 源码保持原版，当前验证基线为 `d165de43`。此前对登录、页面、会话选择、版本提示、错误浮层、共享契约和订阅模块的定制均已收回。AgentForge 负责兼容原协议与行为；浏览器测试和本文档均保存在 AgentForge 仓库，不向 Rakazo 添加文件。
 
-“保持原版”不表示已实现 Rakazo 全部产品能力。Computer、附件、语音、Hub 管理页面和示教录制、模型凭据管理、SSO 等未完成入口继续由后端返回错误，展示和导航遵守原版客户端。
+原版 Computer 面板可查看和接管已分配的桌面，聊天与 Files 页面支持下载本次运行生成的 CSV。语音、Hub 管理页面、示教录制、模型凭据管理和 SSO 等入口仍保留，未接通的操作由后端返回错误。
 
 ## 本地启动
 
@@ -13,7 +13,7 @@ AGENTFORGE_AUTH_MODE=database
 AGENTFORGE_WEB_ORIGIN=http://127.0.0.1:5173
 ```
 
-在 AgentForge 目录升级数据库（当前最新 `0011`），并为已存在的成员设置 Web 登录：
+在 AgentForge 目录升级数据库（当前最新 `0014`），并为已存在的成员设置 Web 登录：
 
 ```bash
 uv run --env-file .env --locked alembic upgrade head
@@ -68,13 +68,13 @@ node --import "$AGENTFORGE_RAKAZO_ROOT/node_modules/tsx/dist/loader.mjs" tests/i
 ## 完整聊天手动验收
 
 1. 在 `.env` 配置模型，DeepSeek 官方示例见 [模型路由](model-routing.md)；API 与 Worker 使用相同配置。密钥只放本机 `AGENTFORGE_MODEL_API_KEY`。
-2. 按上文升级到 `0011`，以数据库身份模式启动 API、Worker 和原版 Web，使用管理员配置的邮箱密码登录。
+2. 按上文升级到 `0014`，以数据库身份模式启动 API、Worker 和原版 Web，使用管理员配置的邮箱密码登录。
 3. 原版模型设置可选 `deepseek-v4-pro`；Bot 设置的模型下拉框也应包含该项。旧模拟 Bot 必须改选真实模型（或保存默认模型），否则仍按旧配置运行。
 4. 第一轮发送：`请记住本次代号为星河。调用 example_report，把“今天完成模型接入”整理为报告草稿，再告诉我工具返回的内容。` 应看到工具执行事件与最终回复。
 5. 第二轮发送：`本次代号是什么？上一轮工具整理了什么？` 应能引用第一轮上下文；刷新页面后，两轮消息仍存在。
 6. 在 Bot 设置选择模型后提交新消息，核对新 Run 的 `execution_config.model`；旧 Run 模型和工具记录应不变。停止、失败和清空按原版入口测试，失败时展示明确错误。
 
-后端可通过 `AGENTFORGE_MODEL_STREAM=true` 启用流式正文；重启 API / Worker 后为现有 Bot 重新保存模型配置，再到原版设置 **General → Advanced → Stream replies** 打开显示开关。该开关默认关闭；关闭时仍在该轮完成后显示答案。SSE 同时传递运行和工具状态。工具仅包括现有受控纯函数与技能读取，不能据此验收浏览器、命令执行或文件生成。模型连接配置不是连通性证明，真实调用成功后才能记录真实验收通过。
+后端可通过 `AGENTFORGE_MODEL_STREAM=true` 启用流式正文；重启 API / Worker 后为现有 Bot 重新保存模型配置，再到原版设置 **General → Advanced → Stream replies** 打开显示开关。该开关默认关闭；关闭时仍在该轮完成后显示答案。SSE 同时传递运行和工具状态。上述用例覆盖聊天与报告草稿。桌面接管、可见网页检索及审批后导出 CSV 需按 [Supervisor 配置](../apps/supervisor/README.md) 单独验收。模型连接配置不是连通性证明，真实调用成功后才能记录真实验收通过。
 
 ## 原版核对
 

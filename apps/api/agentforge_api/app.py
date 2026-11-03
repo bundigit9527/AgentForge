@@ -228,6 +228,7 @@ def create_app(
                     "tool_calls",
                     "external_effects",
                     "approval_requests",
+                    "run_artifacts",
                     "approval_grants",
                     "skill_installations",
                     "identity_tenants",

@@ -7,13 +7,18 @@ import time
 
 from agentforge_contracts.rakazo import (
     AnswerApproval,
+    ArtifactFamily,
+    ArtifactId,
     Bootstrap,
+    BotArtifact,
     ConversationList,
     CreateBot,
     CreateConversation,
     CreateSkill,
     Empty,
     History,
+    ListSpaceArtifacts,
+    ReleaseDesktop,
     RemoveSkill,
     SelectConversation,
     Send,
@@ -34,6 +39,7 @@ from agentforge_core.models import RunConflict, RunNotFound
 from agentforge_core.skills import SkillDocumentError
 from agentforge_runtime.errors import RuntimeFailure
 from agentforge_storage.approvals import ApprovalRepository
+from agentforge_storage.artifacts import ArtifactRepository
 from agentforge_storage.rakazo import RakazoRepository
 from fastapi import Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -41,6 +47,7 @@ from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 
+from agentforge_api.desktop import mount_desktop
 from agentforge_api.rakazo_models import ModelRpcAdapter
 from agentforge_api.rakazo_skills import SkillRpcAdapter
 
@@ -178,6 +185,10 @@ async def read_input(request):
 
 
 def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authenticate, skills):
+    from agentforge_api.browser_auth import COOKIE
+
+    desktop = mount_desktop(app, store, browser)
+    artifacts = ArtifactRepository(store)
     service = RakazoRepository(store)
     model_adapter = ModelRpcAdapter(store, model_configuration)
     app.state.rakazo = service
@@ -200,7 +211,9 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
             "hostCredentialSource": None,
             "computerHost": None,
             "canChooseHostComputer": False,
-            "sandboxProvider": "unavailable",
+            "sandboxProvider": "docker"
+            if desktop and desktop.assigned(desktop.assignment(), scope)
+            else "unavailable",
             "avatarStyle": "robot",
             "billingEnabled": False,
         }
@@ -222,7 +235,19 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
             }
         ]
 
-    def dispatch(scope, procedure, data, expected_thread_id=None):
+    def dispatch(scope, procedure, data, expected_thread_id=None, cookie=None):
+        def snapshot(bot):
+            snap = service.snapshot(scope, bot, expected_thread_id=expected_thread_id)
+            return desktop.snapshot(scope, bot, cookie, snap) if desktop else snap
+
+        if desktop and procedure.startswith("computer/"):
+            action = procedure.removeprefix("computer/")
+            if action == "updates":
+                Empty.model_validate(data)
+                return []
+            if action in {"status", "boot", "release", "takeover", "heartbeat", "screenUrl"}:
+                model = ReleaseDesktop if action == "release" else Target
+                return desktop.handle(action, scope, str(model.model_validate(data).botId), cookie)
         if procedure == "health":
             Empty.model_validate(data)
             return {"ok": True, "version": "agentforge-0.1.0"}
@@ -261,7 +286,7 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
                 "archivedGroups": [],
                 "routines": [],
                 "spaces": navigation,
-                "thread": service.snapshot(scope, selected) if selected else None,
+                "thread": snapshot(selected) if selected else None,
             }
         if procedure in {"models/list", "models/credentials"}:
             Empty.model_validate(data)
@@ -320,6 +345,26 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
                 model.model_validate(data).model_dump(mode="json"),
                 create=procedure.endswith("/create"),
             )
+        if procedure == "artifacts/list":
+            return artifacts.listing(scope, str(Target.model_validate(data).botId))
+        if procedure == "artifacts/listSpace":
+            page = ListSpaceArtifacts.model_validate(data)
+            return artifacts.listing(
+                scope,
+                str(page.botId) if page.botId else None,
+                limit=page.limit,
+                cursor=str(page.cursor) if page.cursor else None,
+            )
+        if procedure == "artifacts/get":
+            target = BotArtifact.model_validate(data)
+            return artifacts.get(scope, str(target.artifactId), bot_id=str(target.botId))
+        if procedure == "artifacts/getById":
+            return artifacts.get(scope, str(ArtifactId.model_validate(data).artifactId))
+        if procedure == "artifacts/listVersions":
+            item = artifacts.get(
+                scope, str(ArtifactFamily.model_validate(data).familyId), content=False
+            )
+            return [{k: item[k] for k in ("id", "version", "name", "createdAt")}]
         if procedure == "threads/answer":
             body = AnswerApproval.model_validate(data)
             # Native callers target a Bot; resolve the caller's selected Thread first.
@@ -348,6 +393,8 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
             target = str(Target.model_validate(data).botId)
             if procedure == "bots/get":
                 return service.bot(scope, target)
+            if procedure == "threads/get":
+                return snapshot(target)
             return targets[procedure](scope, target, expected_thread_id=expected_thread_id)
         if procedure == "threads/messages":
             body = History.model_validate(data)
@@ -422,7 +469,9 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
                     media_type="text/event-stream",
                     headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
                 )
-            result = await run_in_threadpool(dispatch, scope, procedure, data, expected_thread_id)
+            result = await run_in_threadpool(
+                dispatch, scope, procedure, data, expected_thread_id, request.cookies.get(COOKIE)
+            )
             return JSONResponse({"json": result}, headers={"Cache-Control": "no-store"})
         except Exception as exc:
             error = failure(exc)

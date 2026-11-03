@@ -7,7 +7,7 @@
     "url": "http://127.0.0.1:8766/mcp",
     "allow_insecure_http": true,
     "token_env": "AGENTFORGE_MCP_COMPUTER_TOKEN",
-    "read_tools": {"summarize_numbers": 1},
+    "read_tools": {"summarize_numbers": 1, "export_number_summary_csv": 1},
     "timeout_seconds": 20
   }]
 }

@@ -1,47 +1,22 @@
 # 与 Rakazo 对齐的架构基线
 
-更新日期：2026-11-02。参考已核查的 Rakazo 本地版本 `d165de43`（2026-10-15）；不代表远程最新版本。
-
-AgentForge 以 Rakazo 的服务职责、执行链路、资源边界和恢复语义作为参考，以 Python 实现后端。现有企业系统接入、资产版本快照和 MIT 项目方向保留；已选择 Python 后端兼容 Rakazo oRPC，保留原有 REST；React / Electron 的完整页面和能力入口仍需联调。
+核查日期为 2026-11-03。比较对象为本地 Rakazo 原版 `d165de43` 与 AgentForge 迁移 `0014` 对应的实现。Rakazo 一侧按源码核对，AgentForge 一侧区分了本机联调、自动化回归和待验收能力。
 
 ## 本轮代码核查：对齐情况与实际差距
 
-结论：API → Worker → Harness → Model / Tool 的职责方向没有改变；AgentForge 当前是可运行的 Python 核心与原版 Web 兼容子集，不能按 Rakazo 已有的页面数量判定功能齐全。以下为本地源码对比，不代表已对 Rakazo 全部功能重新运行验收。
-
-| 维度 | Rakazo 本地原版 | AgentForge 本轮完成后 | 判断 |
-| --- | --- | --- | --- |
-| 客户端与协议 | React / Electron 等客户端使用 oRPC 与 Better Auth | 原版 Web 源码不变，Python 兼容登录、聊天、设置及 Skill；桌面未验收 | 复用方向对齐，接口覆盖仍有缺口 |
-| 执行与队列 | TypeScript Worker、Graphile Worker、Pi 运行时 | Python Worker、数据库任务队列、Harness 与 Chat Completions | 职责对齐，语言和队列是有意差异 |
-| 上下文与恢复 | Pi 流式输出、压缩、暂停 / 恢复等实现 | 最近 20 轮成功上下文、文本流、字符预算与完整历史轮次裁剪、Run / Attempt、租约和重试；无语义摘要或完整检查点 | 尚未实现的运行能力 |
-| Skill | 内置 / plugin / user 目录；用户 Skill 在同一资产行编辑 | 内置 / Hub 安装 / 个人 Skill；原版创建编辑删除接通，资产 ID 稳定、内容版本独立保存 | 主要操作对齐；不可变版本与 HTTP Hub 是企业扩展 |
-| 模型 | 模型目录、连接、凭据与备用模型等接口 | 后端环境变量配置单一路由，Chat Completions 已适配；真实路由待联调 | 下一项接入重点 |
-| 身份 | Better Auth 账号和会话体系 | 本地邮箱密码、租户 / 空间角色、令牌、共享；SSO / 注册找回未完成 | 登录协议已兼容，企业身份仍待接入 |
-| Task / Run / 外部动作 | 独立 Task / Run / ExternalEffect 等实体与流程 | Run / Attempt 已实现，taskId 仍是兼容标识，审批和外部动作记录未实现 | 不能把 tool_calls 视为外部动作恢复能力 |
-| Computer、记忆、文件 | SandboxProvider / Docker、MemoryProvider、文件相关实现 | 仍为规划，现有消息历史不等于长期记忆 | 主要功能缺口 |
-| 交付与验证 | 多客户端和部署相关代码 | 本机开发流程和离线测试；Ubuntu 应用镜像、备份恢复及生产验收未完成 | 不能据此认定已可生产交付 |
-
-核查依据：Rakazo 的 `apps/worker/src/index.ts`、`packages/adapters/src/pi-runtime.ts`、`packages/adapters/src/approval-effect.ts`、`packages/adapters/src/sandbox-factory.ts`、`packages/adapters/src/memory-provider-factory.ts`、`apps/api/src/agent-skills.ts`、`packages/contracts/src/rpc.ts` 和 `packages/db/prisma/schema.prisma`；AgentForge 的 `apps/api/agentforge_api/orpc.py`、`packages/runtime/agentforge_runtime/chat_harness.py`、`packages/storage/agentforge_storage/repository.py`、`packages/storage/agentforge_storage/user_skills.py` 及相应测试。
-
-本轮优先补齐个人 Skill 编辑，是因为它可以直接复用原版页面并形成“创建 → 选择 → 执行 → 编辑 → 再执行”的完整流程。没有通过修改 Rakazo 页面掩盖后台缺口；未接通的 Hub 管理、示教录制及模型连接入口仍返回原协议错误。
-
-## 模块映射与现状
-
-| Rakazo 概念 | AgentForge 对应 | 当前状态 |
+| 能力 | Rakazo 原版实现 | AgentForge 当前实现与差距 |
 | --- | --- | --- |
-| API / 身份与资源服务 | FastAPI / contracts / storage | 已实现本地身份、空间成员角色、令牌与显式共享；企业登录待接入 |
-| oRPC / Better Auth 客户端 | Python RPC 适配层 / 本地浏览器会话 | 原版源码保持不变；邮箱密码登录、核心聊天、设置和清空兼容在 Python 后端实现；SSO 与完整产品功能未验收 |
-| Worker / Run Executor | Python Worker / 任务存储 | 已有领取、续租、失效保护、Attempt；恢复语义待补齐 |
-| Pi AgentRuntime | Python Harness / ChatModel | 已有模型和工具循环、技能快照、文本流及历史预算裁剪；语义摘要和检查点待补 |
-| Bot / Thread / Message | Agent / AgentVersion / Thread / Message | 已实现；版本固定为企业扩展 |
-| Task / Run / Attempt | Task / Run / Attempt | Run、Attempt 已实现；独立 Task 待工作流阶段增加 |
-| Builtin / AgentSkill / skill_read | 内置 / 安装 / 个人 Skill 及 skill_read | 已实现原版 CRUD、不可变版本和按需读取；Hub 安装是企业扩展 |
-| ConnectorProvider / adapters | core 中的接口 / connectors 中的协议适配 | 已有 SkillHub 接口与 HTTP 适配；业务连接器待补 |
-| ExternalEffect / approval checkpoint | 外部操作记录 / 审批 / 运行检查点 | 待实现；现有工具记录不可替代 |
-| SandboxProvider / Supervisor / Computer | Python 环境接口 / Supervisor / Docker Computer | 目标边界一致，尚未实现 |
-| MarkdownMemoryStore / MemoryProvider | Memory 模块与企业知识连接器 | 尚未实现，现有消息历史不等于长期记忆 |
-| ArtifactStore / AgentHome | 文件产物与工作目录存储 | 尚未实现 |
+| Web 与身份 | React 客户端通过 Better Auth 和 oRPC 访问服务 | 原版 Web 可登录、选模型、多轮聊天、接收 SSE 和回答审批。FastAPI 在后端兼容协议，保留 REST。本地账号、角色和空间授权已实现，SSO 和部分管理接口仍待接入。 |
+| 运行与模型 | Graphile Worker 调度任务，Pi 负责 Agent 循环、上下文和工具 | Python Worker 使用数据库队列和租约，Python Harness 调用 Chat Completions。已联调 DeepSeek，支持版本快照、文本流和完整轮次裁剪。缺少 Pi 式语义压缩与独立业务 Task，RPC 的 taskId 为兼容标识。 |
+| Skill 与 MCP | 内置及用户 Skill、MCP 连接和工具管理 | 内置 Skill、HTTP Hub 安装、个人 Skill CRUD 和运行时按版本读取已接通。远程 MCP 工具需由部署方登记并限制作用域，原版广场管理和示教录制仍有缺口。 |
+| 审批与恢复 | ExternalEffect、审批卡片和回答后恢复执行 | Python Harness 保存工具参数与检查点，审批后恢复同一次操作。已确认结果可复用，已发出但结果未知的操作停止自动重发。通用外部业务写入仍待接入。 |
+| Computer | SandboxProvider 管理本地或远程环境的生命周期，提供桌面、终端和文件能力 | 数值计算在临时 Docker 容器中执行。交互桌面由部署者预分配并绑定租户、空间、用户和 Bot，原版面板可观看、接管和交还。按需创建、跨实例调度以及完整终端与文件接口仍待实现。 |
+| 浏览器 | 通用浏览器工具提供导航、观察和页面操作 | 财经新闻支持后台 RSS，也支持在可见 Chromium 中加载中新网财经列表、读取标题时间、滚动并点击原文。用户接管时 Agent 停止操作。可见流程仅开放指定站点和动作。 |
+| 产物与记忆 | 文件产物、版本和 MemoryProvider | 经审批的 CSV 可持久化，在聊天中显示文件卡片，并可由所有者下载。当前为单版本报告。通用上传、多版本管理、长期记忆与企业知识检索待实现。 |
 
-Rakazo 代码参考：`apps/worker/src/index.ts`、`packages/adapters/src/executor.ts`、`packages/core/src/agent-skill.ts`、`packages/adapters/src/skill-tools.ts`、`packages/adapters/src/approval-effect.ts`、`packages/adapters/src/sandbox-factory.ts` 和 `packages/db/prisma/schema.prisma`。
+Rakazo 对照入口为 `apps/api/src/router.ts`、`apps/worker/src/index.ts` 和 `packages/adapters/src/` 下的 `pi-runtime.ts`、`approval-effect.ts`、`sandbox-factory.ts`、`browser-tools.ts`。AgentForge 对应入口包括 [oRPC 路由](../apps/api/agentforge_api/orpc.py)、[Python Harness](../packages/runtime/agentforge_runtime/chat_harness.py)、[桌面代理](../apps/api/agentforge_api/desktop.py)、[财经网页工具](../apps/supervisor/agentforge_supervisor/visible_news.py) 和 [文件产物存储](../packages/storage/agentforge_storage/artifacts.py)。
+
+本轮本机回归结果为 SQLite 557 项通过、5 项 PostgreSQL 专项跳过，独立 PostgreSQL 测试库 562 项全部通过。真实网页检索的验收路径是从原版聊天发起请求，在「电脑」查看模式观察浏览器加载并打开原文，最后核对聊天回复中的来源链接。运行所需的桌面分配、凭据和工具绑定见 [Supervisor 配置](../apps/supervisor/README.md)。
 
 ## 必须保持的边界
 
@@ -65,13 +40,12 @@ Rakazo 代码参考：`apps/worker/src/index.ts`、`packages/adapters/src/execut
 
 ## 后续验收顺序
 
-1. 保持 Rakazo 原版 `d165de43` 源码；登录、设置、清空与协议映射在 AgentForge 实现。已撤回前端专用会话选择、版本提示、登录分支和统一错误浮层。已补原版 Skill 目录、个人技能 CRUD 和聊天选择；后续优先补模型目录 / 路由接口、真实路由与企业登录，禁止通过新增 Rakazo 专用控件解决后端能力差异。共享授权不替代外部业务审批。
-2. 审批暂停/恢复、外部操作记录与检查点；验证崩溃后不盲目重复业务操作。
-3. Supervisor / Docker Computer / 文件产物；验证授权工作目录、资源限制、取消与回收。
-4. 接入已有广场和知识系统，并增加 Task 与简单工作流步骤；完成“取资料 → 分析 → 报告 → 人工确认”。工作流在执行核心之上编排，不替换 Harness。
-5. 最小 Web / 桌面交互及 Ubuntu 容器化交付，完成监控、备份与恢复演练。
+1. 补齐 Computer 生命周期。用两个身份同时申请桌面，验证分配、接管、撤权、停止、回收和重启恢复，再接原版 Terminal 与 Files 面板。
+2. 将财经浏览流程扩展为受策略约束的通用浏览器工具。验证允许域名、导航、页面观察、点击和人工接管互斥，并覆盖上游超时与页面结构变化。
+3. 扩展产物版本与业务工具审批。验证重试不重复写入、不同所有者不可互读、旧版本可下载，再串联“检索 → 分析 → 报告 → 确认”。
+4. 接入企业身份、知识系统和实际 Skill 广场，再在目标 Ubuntu 服务器验收容器部署、监控及备份恢复。
 
-此处是实施基线和差距清单，不表示所有 Rakazo 能力已经完成。
+## 历史实施记录
 
 ### 2026-11-02：聊天模型选择与 DeepSeek 适配
 

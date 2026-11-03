@@ -165,3 +165,25 @@ class AnswerApproval(Target):
     answer: Literal["allow", "always", "deny"]
     clientNonce: str | None = Field(default=None, min_length=1, max_length=200)
     username: None = None
+
+
+class ListSpaceArtifacts(RpcInput):
+    botId: UUID | None = None
+    cursor: UUID | None = None
+    limit: int = Field(default=30, ge=1, le=60, strict=True)
+
+
+class ArtifactId(RpcInput):
+    artifactId: UUID
+
+
+class BotArtifact(Target):
+    artifactId: UUID
+
+
+class ArtifactFamily(RpcInput):
+    familyId: UUID
+
+
+class ReleaseDesktop(Target):
+    reason: Literal["done", "skipped"] | None = None

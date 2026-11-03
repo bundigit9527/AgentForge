@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agentforge_core.mcp import McpToolSnapshot
+from agentforge_core.reports import exports_csv
 from agentforge_core.skills import SkillReference, SkillSnapshot
 from agentforge_core.tools import ToolReferences
 
@@ -54,6 +55,8 @@ class ExecutionSnapshot(BaseModel):
         if self.mcp_tools and self.model.provider != "chat_completions":
             raise ValueError("MCP tools require a real-model execution profile")
         refs = [*self.tools, *(t.reference for t in self.mcp_tools)]
+        if any(exports_csv(t) and t.reference not in self.approval_tools for t in self.mcp_tools):
+            raise ValueError("CSV export must use the approval workflow")
         if not set(self.approval_tools) <= set(refs):
             raise ValueError("Approval tools must be enabled tools")
         if self.approval_tools and self.model.provider != "chat_completions":

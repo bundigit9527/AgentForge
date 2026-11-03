@@ -77,6 +77,7 @@ class Worker:
                         claim.run.scope,
                         snapshot.mcp_tools,
                         owns_execution,
+                        bot_id=claim.run.agent_id,
                     )
                     runtime_tools = (*runtime_tools, *mcp_refs)
                     runtime_allowed = (*runtime_allowed, *mcp_refs)
