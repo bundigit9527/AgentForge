@@ -111,13 +111,25 @@ class ToolRegistry:
             raise ValueError("Tool allowlist contains duplicate or unknown versions")
 
     def select(
-        self, references: tuple[str, ...], allowed: tuple[str, ...]
+        self,
+        references: tuple[str, ...],
+        allowed: tuple[str, ...],
+        *,
+        read_allowed: tuple[str, ...] = (),
     ) -> dict[str, ToolDefinition]:
         selected = {}
         for ref in references:
             definition = self._definitions.get(ref)
-            # External reads/writes require future approvals, credentials and effect recovery.
-            if definition is None or ref not in allowed or definition.effect != "pure":
+            # Reads need an additional grant from the runtime's scoped MCP adapter.
+            # Arbitrary reads and all writes stay disabled.
+            if (
+                definition is None
+                or ref not in allowed
+                or not (
+                    definition.effect == "pure"
+                    or (definition.effect == "read" and ref in read_allowed)
+                )
+            ):
                 raise RuntimeFailure(RunErrorCode.TOOL_NOT_ALLOWED)
             if definition.name in selected:
                 raise RuntimeFailure(RunErrorCode.TOOL_NOT_ALLOWED)
@@ -186,8 +198,9 @@ class ToolExecutor:
         allowed: tuple[str, ...] = DEFAULT_TOOLS,
         journal: ToolJournal | None = None,
         checkpoint: Callable[[], bool] = lambda: True,
+        read_allowed: tuple[str, ...] = (),
     ):
-        self.definitions = registry.select(references, allowed)
+        self.definitions = registry.select(references, allowed, read_allowed=read_allowed)
         self.journal = journal
         self.checkpoint = checkpoint
 
@@ -243,6 +256,8 @@ class ToolExecutor:
         try:
             try:
                 raw = prepared.definition.handler(prepared.arguments)
+            except (RuntimeFailure, ExecutionStopped):
+                raise
             except Exception:
                 raise RuntimeFailure(RunErrorCode.TOOL_EXECUTION_FAILED) from None
             try:

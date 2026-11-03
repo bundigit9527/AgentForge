@@ -232,7 +232,7 @@ def test_context_limit_prevents_an_oversized_followup_request():
         return httpx.Response(200, json=completion(None, calls))
 
     with configured_harness(model_settings(), transport=httpx.MockTransport(respond)) as harness:
-        with pytest.raises(RuntimeFailure, match="model_limit_exceeded"):
+        with pytest.raises(RuntimeFailure, match="model_context_limit_exceeded"):
             harness.execute("task", lambda _: True)
     assert len(requests) == 1
 

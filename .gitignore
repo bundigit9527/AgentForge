@@ -223,3 +223,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Deployment-owned MCP endpoints and grants
+mcp.local.json

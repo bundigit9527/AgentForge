@@ -12,6 +12,8 @@ from agentforge_storage.schema import (
     runs,
     skill_installations,
     threads,
+    user_skill_versions,
+    user_skills,
 )
 
 RESOURCES = {
@@ -135,6 +137,19 @@ class Authorization:
                     .where(
                         skill_installations.c.installation_id == skill.reference,
                         self.visible(skill_installations, scope, "skill", "installation_id"),
+                    )
+                    .exists()
+                )
+            elif skill.source == "user":
+                # Deletion hides future selection, while owner snapshots remain executable.
+                # User skill versions never acquire sharing through the Hub asset table.
+                checks.append(
+                    sa.select(user_skill_versions.c.version_id)
+                    .join(user_skills)
+                    .where(
+                        owned(user_skills, scope),
+                        user_skills.c.skill_id == skill.source_id[5:],
+                        user_skill_versions.c.version_id == skill.reference,
                     )
                     .exists()
                 )

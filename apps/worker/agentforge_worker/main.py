@@ -5,6 +5,8 @@ import signal
 from contextlib import ExitStack
 from threading import Event
 
+from agentforge_connectors.mcp import McpService
+from agentforge_connectors.mcp_config import McpSettings
 from agentforge_core.settings import Settings
 from agentforge_runtime.chat_harness import configured_harness
 from agentforge_runtime.config import ModelSettings
@@ -39,6 +41,7 @@ def main() -> None:
     try:
         settings = Settings.from_env()
         model_settings = ModelSettings.from_env()
+        mcp_service = McpService(McpSettings.from_env())
         allowed_tools = allowed_tools_from_env()
     except ValueError as exc:
         parser.error(str(exc))
@@ -55,6 +58,7 @@ def main() -> None:
                 lease_seconds=args.lease_seconds,
                 heartbeat_interval=interval,
                 allowed_tools=allowed_tools,
+                mcp_service=mcp_service,
             )
             if args.once:
                 handled = worker.run_once()

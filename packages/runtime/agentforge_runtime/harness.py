@@ -38,6 +38,8 @@ class Harness:
         *,
         checkpoint: Callable[[], bool] = lambda: True,
         on_model: Callable[..., bool] | None = None,
+        on_text: Callable[..., bool] | None = None,
+        on_context: Callable[..., bool] | None = None,
         execution_config: ExecutionSnapshot | None = None,
         context: tuple[ContextMessage, ...] = (),
         tool_executor: ToolExecutor | None = None,

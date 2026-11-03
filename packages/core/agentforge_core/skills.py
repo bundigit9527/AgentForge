@@ -64,8 +64,10 @@ class HubCatalog(BaseModel):
 class SkillSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     reference: SkillReference
-    source: Literal["builtin", "hub"]
-    source_id: str = Field(pattern=r"^(builtin|hub:[a-f0-9]{64})$")
+    source: Literal["builtin", "hub", "user"]
+    source_id: str = Field(
+        pattern=r"^(builtin|hub:[a-f0-9]{64}|user:[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$"
+    )
     manifest: SkillManifest
     sha256: Digest
 
@@ -77,11 +79,30 @@ class SkillSnapshot(BaseModel):
             "builtin:"
         ):
             raise ValueError("Invalid skill source")
+        if self.source == "hub" and not self.source_id.startswith("hub:"):
+            raise ValueError("Invalid hub source")
+        if self.source == "user" and (
+            not self.source_id.startswith("user:")
+            or self.manifest.skill_id != "user_" + self.source_id[5:].replace("-", "")
+        ):
+            raise ValueError("Invalid user skill source")
         if builtin and self.reference != expected:
             raise ValueError("Invalid builtin reference")
         if self.sha256 != self.manifest.digest():
             raise ValueError("Skill content digest does not match")
         return self
+
+
+class SkillDocumentError(ValueError):
+    """Invalid/beyond-budget SKILL.md; never expose raw YAML parser errors."""
+
+
+class SkillDocument(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    name: str = Field(min_length=1, max_length=80)
+    description: str = Field(min_length=1, max_length=1000)
+    content: str = Field(min_length=1, max_length=12000)
+    required_tools: ToolReferences = ()
 
 
 class HubUnavailable(Exception):

@@ -1,8 +1,10 @@
 from agentforge_core.models import RunConflict, RunNotFound
 from agentforge_core.skills import SkillHub
 from agentforge_storage.skills import SkillRepository
+from agentforge_storage.user_skills import UserSkillRepository
 
 from agentforge_skills.builtin import BUILTIN_SKILLS
+from agentforge_skills.markdown import resolve_document
 
 
 class SkillService:
@@ -10,12 +12,21 @@ class SkillService:
         self.repository = repository
         self.hub = hub
         self.builtin = {skill.reference: skill for skill in BUILTIN_SKILLS}
+        self.user = UserSkillRepository(
+            repository.engine, repository.clock, auth_mode=repository.authorization.mode
+        )
+        self.reserved_names = {skill.manifest.name.casefold() for skill in BUILTIN_SKILLS}
 
     def list(self, scope, offset, limit):
-        local = list(self.builtin.values())[offset : offset + limit]
-        return local + self.repository.list(
-            scope, max(0, offset - len(self.builtin)), limit - len(local)
-        )
+        return [entry[0] for entry in self.catalog(scope)[offset : offset + limit]]
+
+    def catalog(self, scope, *, connection=None):
+        if connection is None:
+            with self.repository.engine.connect() as conn:
+                return self.catalog(scope, connection=conn)
+        installed = self.repository.catalog(scope, connection=connection)
+        personal = self.user.catalog(scope, connection=connection)
+        return [(skill, 0.0, 0.0) for skill in self.builtin.values()] + installed + personal
 
     def resolve(self, scope, references):
         resolved = []
@@ -25,9 +36,24 @@ class SkillService:
                 if skill is None:
                     raise RunNotFound()
             else:
-                skill = self.repository.get(scope, reference)
+                try:
+                    skill = self.repository.get(scope, reference)
+                except RunNotFound:
+                    skill = self.user.resolve(scope, reference)
             resolved.append(skill)
         return tuple(resolved)
+
+    def create_user(self, scope, fields):
+        return self.user.create(scope, resolve_document(fields), self.reserved_names)
+
+    def update_user(self, scope, skill_id, fields, expected_version=None):
+        return self.user.update(
+            scope,
+            skill_id,
+            lambda prior: resolve_document(fields, prior),
+            self.reserved_names,
+            expected_version=expected_version,
+        )
 
     def install(self, scope, request):
         if request.source_id != self.hub.source_id:

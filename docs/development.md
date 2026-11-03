@@ -95,7 +95,7 @@ uv run --locked --offline pytest
 - 首版由数据库任务表兼任持久化队列，任务提交与事件写入在同一事务中完成，不存在数据库与外部消息队列的双写。
 - Worker 用条件更新领取任务，默认租约 60 秒，后台每 20 秒续期；执行尝试通过独立标识隔离，过期或取消的尝试不能提交后续工具事件和最终结果。
 - Worker 中断后，租约过期的任务可以重新领取，最多尝试三次。当前纯内置工具允许重做；模型调用在恢复时可能再次发起并重复计费，不能据此重放外部业务副作用。
-- 已实现后台续租与任务事件流；模型 token 流式输出、审批暂停及外部操作补偿仍待实现。真实模型、长任务或外部业务工具接入前需补齐相应机制。
+- 已实现后台续租与任务事件流；模型正文流式输出已实现；审批暂停及外部操作补偿仍待实现。真实模型、长任务或外部业务工具接入前需补齐相应机制。
 - 取消阻止后续状态写入；正在计算的同步模拟函数不会被强制杀死。Chat Completions 模式在每轮请求前后检查租约和取消状态，但已发出的同步 HTTP 请求不能立即中断；沙箱进程取消仍待实现。
 - 结果作为文本保存在数据库中；文件产物、知识库和长期记忆尚未实现。
 
@@ -165,24 +165,36 @@ API 启动后通过 `/docs` 查看接口并设置 Bearer 令牌。提交任务�
 uv run --env-file .env --locked agentforge-worker --once
 ```
 
-`--once` 每次领取最多一个任务后退出。后续需要持续处理队列时可手动使用 `--watch`，支持租约续期和退出信号处理；本次没有启动常驻进程。完整参数与数据库 `0007` 升级说明见 [任务执行协议](task-execution.md)。
+`--once` 每次领取最多一个任务后退出。后续需要持续处理队列时可手动使用 `--watch`，支持租约续期和退出信号处理；持续运行时须显式使用该参数。完整参数与数据库 `0011` 升级说明见 [任务执行协议](task-execution.md)。
 
 实现参考：[FastAPI 测试文档](https://fastapi.tiangolo.com/tutorial/testing/)、[SQLAlchemy 事务文档](https://docs.sqlalchemy.org/en/20/core/connections.html)、[Alembic 迁移文档](https://alembic.sqlalchemy.org/en/latest/tutorial.html)。
 
 ## Agent 与会话调试
 
-新增 Agent、会话、消息和执行尝试接口，数据库需升级到最新迁移（当前 `0007`）。按 [Agent 与会话](conversations.md) 的步骤验证两轮交流、版本固定、重复提交和恢复。旧版排队任务缺少执行快照时不会推测模型执行，需要重新提交。
+新增 Agent、会话、消息和执行尝试接口，数据库需升级到最新迁移（当前 `0011`）。按 [Agent 与会话](conversations.md) 的步骤验证两轮交流、版本固定、重复提交和恢复。旧版排队任务缺少执行快照时不会推测模型执行，需要重新提交。
 
 工具目录、选择版本、允许列表配置及调用记录接口见 [版本化工具](tools.md)。
 
 ## 内置技能与 Skill Hub
 
-本地已有资料摘要、会议纪要、文本统计三个 Skill；无需连接广场即可通过 `/api/v1/skills` 查看并绑定 Agent。配置可选 Hub 后可浏览版本并显式安装；协议与完整手动步骤见 [Skill 与广场安装](skills.md)。当前无技能管理页面。
+本地已有资料摘要、会议纪要、文本统计三个 Skill；无需连接广场即可通过 `/api/v1/skills` 查看并绑定 Agent。配置可选 Hub 后可浏览版本并显式安装；协议与完整手动步骤见 [Skill 与广场安装](skills.md)。原版 Web 已接通个人技能新建、编辑、删除及聊天选择；Hub 网页管理仍待接通。
 
 ## 本地多用户调试
 
-默认 `AGENTFORGE_AUTH_MODE=development` 保留原有单用户步骤。使用 `database` 模式前，显式升级到最新迁移 `0007`（身份表始于 `0006`），通过 `agentforge-admin` 初始化空间、管理员和访问令牌。成员、共享与撤权的完整命令见 [本地身份与权限](identity.md)。API 与 Worker 使用一致的认证模式；切换配置不会自动创建账号或迁移资源所有者。
+默认 `AGENTFORGE_AUTH_MODE=development` 保留原有单用户步骤。使用 `database` 模式前，显式升级到最新迁移 `0011`（身份表始于 `0006`），通过 `agentforge-admin` 初始化空间、管理员和访问令牌。成员、共享与撤权的完整命令见 [本地身份与权限](identity.md)。API 与 Worker 使用一致的认证模式；切换配置不会自动创建账号或迁移资源所有者。
 
 ## Rakazo Web 接入
 
-已选择后端兼容 oRPC：`/rpc` 与 REST 共用 Agent、会话、Run 和 Worker。先按 [Rakazo oRPC 接入](rakazo-orpc.md) 配置本地令牌登录、同源代理和数据库 `0007`；原版客户端协议及 Web 核心聊天页面已验证，全部原有业务入口和自动请求均保留，未接通功能显示错误；完整产品功能仍待建设。不会因加载 Web 而自动启动 Computer 或模型。
+已选择后端兼容 oRPC：`/rpc` 与 REST 共用 Agent、会话、Run 和 Worker。先按 [Rakazo oRPC 接入](rakazo-orpc.md) 配置本地邮箱密码登录、同源代理和数据库 `0011`；Rakazo 源码保持原版，通过邮箱密码登录；原版客户端协议及核心聊天流程由 AgentForge 中的黑盒脚本验证，全部原有业务入口和自动请求保留，未实现操作按原界面处理错误；完整产品功能仍待建设。不会因加载 Web 而自动启动 Computer 或模型。
+
+## Python Harness 上下文调试
+
+运行 `uv run --locked --offline pytest tests/test_context_budget.py -q` 可离线验证裁剪、工具循环、流式回复、Skill、取消、租约与撤权，无需真实模型或数据库服务。
+
+PyCharm 可在 `packages/runtime/agentforge_runtime/context.py` 的 `ContextWindow.fit`、`chat_harness.py` 的模型请求前及存储层 `record_context` 设置断点。配置、预算的单位、旧 Bot 版本和手动验证步骤见 [上下文管理](context-management.md)。本轮未重启开发服务，现有进程尚未加载这些代码。
+
+## MCP 本地开发
+
+先执行 `uv sync --locked` 安装新增 MCP Python SDK、httpx2 和 JSON Schema 依赖；原模型路由仍使用现有 httpx。依赖锁未升级原有包。MCP 默认关闭，不需要服务即可运行 `uv run --locked --offline pytest tests/test_mcp.py -q`。
+
+手动演示服务、配置文件、绑定步骤和 PyCharm 断点见 [MCP](mcp.md)。本轮未重启正在运行的 API / Worker / Web，未启动演示服务，未改本机 .env 或真实数据库。

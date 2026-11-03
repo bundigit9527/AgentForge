@@ -1,6 +1,7 @@
 import re
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from uuid import uuid4
 
 import sqlalchemy as sa
@@ -122,6 +123,17 @@ def _abandon_tool_calls(connection, row, reason):
     )
 
 
+@contextmanager
+def write_connection(engine, existing=None):
+    if existing is None:
+        with engine.begin() as connection:
+            yield connection
+    else:
+        # A duplicate insert must roll back its reservation, not the caller's transaction.
+        with existing.begin_nested():
+            yield existing
+
+
 class RunRepository:
     """Durable database-backed queue for the offline, side-effect-free example."""
 
@@ -140,6 +152,10 @@ class RunRepository:
         *,
         thread_id: str | None = None,
         execution_config: ExecutionSnapshot | None = None,
+        _connection=None,
+        _latest_agent=False,
+        _resolve_config: Callable[[sa.Connection, ExecutionSnapshot], ExecutionSnapshot]
+        | None = None,
     ) -> Run:
         if idempotency_key is not None and not re.fullmatch(
             r"[A-Za-z0-9._:-]{1,128}", idempotency_key
@@ -169,7 +185,7 @@ class RunRepository:
             return row
 
         try:
-            with self.engine.begin() as connection:
+            with write_connection(self.engine, _connection) as connection:
                 self.authorization.require(connection, scope, write=True)
                 previous = existing(connection)
                 if previous is not None:
@@ -212,7 +228,7 @@ class RunRepository:
                         connection,
                         scope,
                         thread["agent_id"],
-                        thread["agent_version"],
+                        None if _latest_agent else thread["agent_version"],
                         authorization=self.authorization,
                     )
                     config = ExecutionSnapshot.model_validate(agent["execution_config"])
@@ -234,6 +250,10 @@ class RunRepository:
                         .all()
                     )
                     context = [dict(item) for item in reversed(history)]
+                # Resolve explicit RPC skill selection only for a new run, after deduplication,
+                # under the same transaction as its Agent version and dependency checks.
+                if _resolve_config is not None:
+                    config = _resolve_config(connection, config)
                 config = config.model_copy(update={"authorization_mode": self.authorization.mode})
                 self.authorization.require_dependencies(
                     connection, scope, config, thread["agent_id"] if thread else None
@@ -247,7 +267,7 @@ class RunRepository:
                     idempotency_key=idempotency_key,
                     thread_id=thread_id,
                     agent_id=thread["agent_id"] if thread else None,
-                    agent_version=thread["agent_version"] if thread else None,
+                    agent_version=agent["version"] if thread else None,
                     execution_config=config.model_dump(mode="json"),
                     context=context,
                     status=RunStatus.QUEUED.value,
@@ -313,8 +333,8 @@ class RunRepository:
             )
         return [RunEvent(**row) for row in rows]
 
-    def cancel(self, scope: Scope, run_id: str) -> Run:
-        with self.engine.begin() as connection:
+    def cancel(self, scope: Scope, run_id: str, *, _connection=None) -> Run:
+        with write_connection(self.engine, _connection) as connection:
             self.authorization.require(connection, scope, write=True)
             original = (
                 connection.execute(sa.select(runs).where(runs.c.run_id == run_id))
@@ -328,7 +348,13 @@ class RunRepository:
                     .where(
                         runs.c.run_id == run_id,
                         _scope_filter(scope),
-                        runs.c.status.in_([RunStatus.QUEUED.value, RunStatus.RUNNING.value]),
+                        runs.c.status.in_(
+                            [
+                                RunStatus.QUEUED.value,
+                                RunStatus.RUNNING.value,
+                                RunStatus.WAITING_INPUT.value,
+                            ]
+                        ),
                     )
                     .values(
                         status=RunStatus.CANCELLED.value,
@@ -355,7 +381,7 @@ class RunRepository:
                 _complete_conversation(connection, row, row["updated_at"])
                 _event(connection, row, "cancelled", {})
                 return _run(row)
-        current = self.get(scope, run_id)
+        current = _run(original) if _connection is not None else self.get(scope, run_id)
         if current.status == RunStatus.CANCELLED:
             return current
         raise RunConflict("A finished task cannot be cancelled")
@@ -371,7 +397,7 @@ class RunRepository:
         with self.engine.connect() as connection:
             candidates = (
                 connection.execute(
-                    sa.select(runs.c.run_id, runs.c.attempt)
+                    sa.select(runs.c.run_id, runs.c.attempt, runs.c.approval_resumes)
                     .where(eligible)
                     .order_by(runs.c.created_at, runs.c.run_id)
                     .limit(16)
@@ -381,7 +407,7 @@ class RunRepository:
             )
         for candidate in candidates:
             attempt_id = str(uuid4())
-            exhausted = candidate["attempt"] >= max_attempts
+            exhausted = candidate["attempt"] - candidate["approval_resumes"] >= max_attempts
             with self.engine.begin() as connection:
                 # Compare-and-swap prevents two Workers from owning the same attempt.
                 row = (
@@ -468,6 +494,61 @@ class RunRepository:
             claim,
             "model_completed",
             {"attempt": claim.run.attempt, "step": step, "model": model, "usage": usage},
+        )
+
+    def record_context(
+        self,
+        claim: Claim,
+        *,
+        step: int,
+        budget_chars: int,
+        before_chars: int,
+        after_chars: int,
+        dropped_turns: int,
+        retained_turns: int,
+    ) -> bool:
+        values = (step, budget_chars, before_chars, after_chars, dropped_turns, retained_turns)
+        if (
+            any(type(value) is not int for value in values)
+            or not 1 <= step <= 32
+            or not 4000 <= budget_chars <= 200000
+            or not 0 <= after_chars <= budget_chars < before_chars
+            or not 1 <= dropped_turns <= 20
+            or not 0 <= retained_turns <= 20 - dropped_turns
+        ):
+            raise ValueError("Invalid context trimming statistics")
+        return self._record_attempt_event(
+            claim,
+            "context_trimmed",
+            {
+                "attempt": claim.run.attempt,
+                "step": step,
+                "budget_chars": budget_chars,
+                "before_chars": before_chars,
+                "after_chars": after_chars,
+                "dropped_turns": dropped_turns,
+                "retained_turns": retained_turns,
+            },
+        )
+
+    def record_text(self, claim: Claim, *, step: int, text: str, reset: bool = False) -> bool:
+        if (
+            type(step) is not int
+            or not 1 <= step <= 32
+            or not isinstance(text, str)
+            or not 1 <= len(text) <= 2048
+            or type(reset) is not bool
+        ):
+            raise ValueError("Invalid model text fragment")
+        return self._record_attempt_event(
+            claim,
+            "model_text",
+            {
+                "attempt": claim.run.attempt,
+                "step": step,
+                "text": text,
+                "reset": reset,
+            },
         )
 
     def _record_attempt_event(self, claim: Claim, event_type: str, data: dict) -> bool:

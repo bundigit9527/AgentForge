@@ -327,3 +327,13 @@ Rakazo 提供产品形态、运行链路和界面交互参考。现有 Pi 是 Ja
 先验证一个真实业务任务的完整链路，再确定依赖和扩容方案。当前不承诺与 Rakazo 的所有功能等价，也不将架构文档视为生产验收结果。
 
 参考：[Rakazo](https://github.com/elie222/rakazo)、[Computer runtime](https://github.com/elie222/rakazo/blob/main/docs/computer-runtime.md)。
+
+## 当前上下文管理边界（2026-11-02）
+
+继续使用纯 Python Harness，不引入 Pi / Node.js 执行进程。新真实模型快照支持固定的字符预算和完整历史轮次裁剪；模型 / 工具循环与权限入口维持原有边界。此处是近期上下文选择策略，不是长期 Memory 模块或语义摘要；配置与兼容行为见 [上下文管理](context-management.md)。
+
+## MCP 远程工具边界
+
+API 提供授权范围内的远程工具发现与 Agent 绑定；配置中固定服务地址、服务账号、租户 / 空间及显式用户。Run 快照保存无凭据的工具定义和路由指纹。Worker 中的 Python MCP 适配器按运行身份检查授权，使用独立连接核对远端定义，经统一 ToolExecutor 执行只读调用。结果不触发代码加载或资源抓取，作为普通工具数据交回模型。
+
+API / Worker 不启动 MCP 子进程，不访问 Docker socket；远程 MCP 服务独立部署。共享 Agent 不能绕过调用者自身的 MCP 授权。上游数据行级权限仍由服务账号和 MCP 服务自身控制；平台对接入口的授权不替代它。详见 [MCP](mcp.md)。

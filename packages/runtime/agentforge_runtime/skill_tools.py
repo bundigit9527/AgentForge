@@ -10,10 +10,12 @@ from agentforge_runtime.tools import ToolDefinition, ToolRegistry
 SKILL_READ = "skill_read@1"
 
 
-def skill_document(skill: SkillSnapshot) -> str:
+def skill_document(skill: SkillSnapshot, *, name: str | None = None) -> str:
+    if skill.source == "user":
+        return skill.manifest.content
     manifest = skill.manifest
     # JSON strings are valid YAML scalars; no untrusted YAML is executed or imported.
-    name = json.dumps(manifest.name, ensure_ascii=False)
+    name = json.dumps(manifest.name if name is None else name, ensure_ascii=False)
     description = json.dumps(manifest.description, ensure_ascii=False)
     return f"---\nname: {name}\ndescription: {description}\n---\n\n{manifest.content}"
 

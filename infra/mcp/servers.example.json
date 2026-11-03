@@ -1,0 +1,15 @@
+{
+  "servers": [
+    {
+      "server_id": "products",
+      "tenant_id": "local",
+      "space_id": "development",
+      "users": ["developer"],
+      "url": "http://127.0.0.1:8765/mcp",
+      "allow_insecure_http": true,
+      "token_env": "",
+      "read_tools": {"product_lookup": 1},
+      "timeout_seconds": 15
+    }
+  ]
+}

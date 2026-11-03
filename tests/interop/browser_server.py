@@ -1,6 +1,7 @@
 """Explicit, loopback-only Web E2E fixture; never loads .env or the development database."""
 
 import argparse
+import secrets
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from uuid import uuid4
@@ -12,6 +13,7 @@ from agentforge_core.settings import Settings
 from agentforge_runtime.config import ModelSettings
 from agentforge_storage.database import create_database
 from agentforge_storage.identity import IdentityRepository
+from agentforge_storage.passwords import PasswordLogin
 from agentforge_storage.repository import RunRepository
 from agentforge_worker.worker import Worker
 from alembic import command
@@ -34,6 +36,8 @@ def main():
         identities = IdentityRepository(engine)
         tokens = {}
         users = {}
+        web_logins = {}
+        passwords = PasswordLogin(identities)
         store = RunRepository(engine, auth_mode="database")
         app = create_app(
             Settings(
@@ -57,12 +61,18 @@ def main():
             )
             tokens.clear()
             users.clear()
+            web_logins.clear()
             for name in ("alice", "bob"):
                 identities.set_member(admin, name, display_name=name.title(), role="member")
                 users[name] = Scope(admin.tenant_id, admin.space_id, name)
                 tokens[name] = identities.issue_token(users[name], lifetime_seconds=3600)
+                email = name + "+" + admin.tenant_id + "@example.test"
+                password = secrets.token_urlsafe(24)
+                passwords.set_password(users[name], email, password)
+                web_logins[name] = {"email": email, "password": password}
             return {
                 "testOnly": True,
+                "webLogins": web_logins,
                 "tokens": {name: item["token"] for name, item in tokens.items()},
             }
 
@@ -75,6 +85,9 @@ def main():
             if name not in tokens:
                 raise HTTPException(404)
             identities.revoke_token(users[name], tokens[name]["token_id"])
+            passwords.set_password(
+                users[name], web_logins[name]["email"], secrets.token_urlsafe(32)
+            )
             return {"ok": True}
 
         try:

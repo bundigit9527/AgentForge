@@ -2,6 +2,7 @@ from datetime import datetime
 from uuid import UUID
 
 from agentforge_core.execution import ExecutionSnapshot
+from agentforge_core.mcp import McpSelection
 from agentforge_core.models import RunStatus
 from agentforge_core.skills import SkillReference
 from agentforge_core.tools import ToolReferences
@@ -13,6 +14,8 @@ class CreateAgent(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     instructions: str = Field(default="", max_length=10000)
     tools: ToolReferences = ("example_report@1",)
+    approval_tools: ToolReferences = ()
+    mcp_tools: tuple[McpSelection, ...] = Field(default=(), max_length=8)
     skills: tuple[SkillReference, ...] = Field(default=(), max_length=8)
 
 

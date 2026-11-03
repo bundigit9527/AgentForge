@@ -1,7 +1,7 @@
 import sqlalchemy as sa
 
 metadata = sa.MetaData()
-SCHEMA_REVISION = "0007"
+SCHEMA_REVISION = "0013"
 
 agents = sa.Table(
     "agents",
@@ -62,13 +62,16 @@ runs = sa.Table(
     sa.Column("attempt", sa.Integer, nullable=False),
     sa.Column("attempt_id", sa.String(36)),
     sa.Column("lease_until", sa.Float),
+    sa.Column("execution_checkpoint", sa.JSON),
+    sa.Column("approval_resumes", sa.Integer, nullable=False, server_default="0"),
     sa.Column("result", sa.Text),
     sa.Column("error_code", sa.String(64)),
     sa.Column("event_seq", sa.Integer, nullable=False),
     sa.Column("created_at", sa.Float, nullable=False),
     sa.Column("updated_at", sa.Float, nullable=False),
     sa.CheckConstraint(
-        "status IN ('queued','running','succeeded','failed','cancelled')", name="ck_run_status"
+        "status IN ('queued','running','waiting_input','succeeded','failed','cancelled')",
+        name="ck_run_status",
     ),
     sa.CheckConstraint("attempt >= 0 AND event_seq >= 0", name="ck_run_counters"),
 )
@@ -120,7 +123,8 @@ attempts = sa.Table(
     sa.Column("finished_at", sa.Float),
     sa.UniqueConstraint("run_id", "number", name="uq_attempts_number"),
     sa.CheckConstraint(
-        "status IN ('running','succeeded','failed','cancelled','expired')", name="ck_attempt_status"
+        "status IN ('running','paused','succeeded','failed','cancelled','expired')",
+        name="ck_attempt_status",
     ),
 )
 
@@ -276,16 +280,41 @@ thread_events = sa.Table(
     metadata,
     sa.Column("thread_id", sa.String(36), sa.ForeignKey("threads.thread_id"), primary_key=True),
     sa.Column("sequence", sa.Integer, primary_key=True),
-    sa.Column("run_id", sa.String(36), sa.ForeignKey("runs.run_id"), nullable=False),
+    sa.Column("run_id", sa.String(36), sa.ForeignKey("runs.run_id"), nullable=True),
     sa.Column("event_type", sa.String(40), nullable=False),
     sa.Column("payload", sa.JSON, nullable=False),
     sa.Column("created_at", sa.Float, nullable=False),
 )
+web_credentials = sa.Table(
+    "web_credentials",
+    metadata,
+    sa.Column("credential_id", sa.String(36), primary_key=True),
+    sa.Column("tenant_id", sa.String(128), nullable=False),
+    sa.Column("space_id", sa.String(128), nullable=False),
+    sa.Column("user_id", sa.String(128), nullable=False),
+    sa.Column("email", sa.String(254), nullable=False, unique=True),
+    sa.Column("password_hash", sa.String(256), nullable=False),
+    sa.Column("revision", sa.Integer, nullable=False),
+    sa.Column("failed_attempts", sa.Integer, nullable=False),
+    sa.Column("locked_until", sa.Float, nullable=False),
+    sa.Column("updated_at", sa.Float, nullable=False),
+    sa.UniqueConstraint("tenant_id", "user_id", name="uq_web_credential_user"),
+    sa.ForeignKeyConstraint(
+        ["tenant_id", "space_id", "user_id"],
+        [
+            "identity_memberships.tenant_id",
+            "identity_memberships.space_id",
+            "identity_memberships.user_id",
+        ],
+    ),
+)
+
 browser_sessions = sa.Table(
     "browser_sessions",
     metadata,
     sa.Column("session_id", sa.String(36), primary_key=True),
     sa.Column("session_hash", sa.String(64), nullable=False, unique=True),
+    sa.Column("credential_id", sa.String(36), sa.ForeignKey("web_credentials.credential_id")),
     sa.Column("token_id", sa.String(36), sa.ForeignKey("identity_tokens.token_id"), nullable=False),
     sa.Column("created_at", sa.Float, nullable=False),
     sa.Column("expires_at", sa.Float, nullable=False),
@@ -293,3 +322,98 @@ browser_sessions = sa.Table(
 )
 
 sa.Index("ix_thread_events_run", thread_events.c.run_id, thread_events.c.sequence)
+
+# Selection is private to the caller, including when an Agent is shared.
+rpc_thread_selections = sa.Table(
+    "rpc_thread_selections",
+    metadata,
+    sa.Column("tenant_id", sa.String(128), primary_key=True),
+    sa.Column("space_id", sa.String(128), primary_key=True),
+    sa.Column("user_id", sa.String(128), primary_key=True),
+    sa.Column("agent_id", sa.String(36), sa.ForeignKey("agents.agent_id"), primary_key=True),
+    sa.Column("thread_id", sa.String(36), sa.ForeignKey("threads.thread_id")),
+)
+
+user_skills = sa.Table(
+    "user_skills",
+    metadata,
+    sa.Column("skill_id", sa.String(36), primary_key=True),
+    sa.Column("tenant_id", sa.String(128), nullable=False),
+    sa.Column("space_id", sa.String(128), nullable=False),
+    sa.Column("user_id", sa.String(128), nullable=False),
+    sa.Column("name_key", sa.String(256)),
+    sa.Column("version", sa.Integer, nullable=False),
+    sa.Column("enabled", sa.Boolean, nullable=False),
+    sa.Column("created_at", sa.Float, nullable=False),
+    sa.Column("updated_at", sa.Float, nullable=False),
+    sa.UniqueConstraint("tenant_id", "space_id", "user_id", "name_key", name="uq_user_skill_name"),
+    sa.CheckConstraint("version >= 1", name="ck_user_skill_version"),
+    sa.CheckConstraint(
+        "(enabled AND name_key IS NOT NULL) OR (NOT enabled AND name_key IS NULL)",
+        name="ck_user_skill_name_state",
+    ),
+)
+
+user_skill_versions = sa.Table(
+    "user_skill_versions",
+    metadata,
+    sa.Column("version_id", sa.String(36), primary_key=True),
+    sa.Column("skill_id", sa.String(36), sa.ForeignKey("user_skills.skill_id"), nullable=False),
+    sa.Column("version", sa.Integer, nullable=False),
+    sa.Column("manifest", sa.JSON, nullable=False),
+    sa.Column("sha256", sa.String(64), nullable=False),
+    sa.UniqueConstraint("skill_id", "version", name="uq_user_skill_revision"),
+    sa.CheckConstraint("version >= 1", name="ck_user_skill_revision"),
+)
+
+
+rpc_model_preferences = sa.Table(
+    "rpc_model_preferences",
+    metadata,
+    sa.Column("tenant_id", sa.String(128), primary_key=True),
+    sa.Column("space_id", sa.String(128), primary_key=True),
+    sa.Column("user_id", sa.String(128), primary_key=True),
+    sa.Column("model_id", sa.String(128), nullable=False),
+    sa.Column("route_fingerprint", sa.String(64), nullable=False),
+)
+
+external_effects = sa.Table(
+    "external_effects",
+    metadata,
+    sa.Column("effect_id", sa.String(36), primary_key=True),
+    sa.Column("run_id", sa.String(36), sa.ForeignKey("runs.run_id"), nullable=False),
+    sa.Column("operation_key", sa.String(128), nullable=False),
+    sa.Column("request", sa.JSON, nullable=False),
+    sa.Column("request_hash", sa.String(64), nullable=False),
+    sa.Column("status", sa.String(16), nullable=False),
+    sa.Column("dispatch_attempt_id", sa.String(36)),
+    sa.Column("reviewed_by", sa.String(128)),
+    sa.Column("result", sa.JSON),
+    sa.Column("created_at", sa.Float, nullable=False),
+    sa.Column("updated_at", sa.Float, nullable=False),
+    sa.UniqueConstraint("run_id", "operation_key", name="uq_effect_run_operation"),
+    sa.CheckConstraint(
+        "status IN ('pending','approved','rejected','dispatched','succeeded','failed')",
+        name="ck_effect_status",
+    ),
+)
+
+approval_requests = sa.Table(
+    "approval_requests",
+    metadata,
+    sa.Column(
+        "effect_id", sa.String(36), sa.ForeignKey("external_effects.effect_id"), primary_key=True
+    ),
+    sa.Column("run_id", sa.String(36), sa.ForeignKey("runs.run_id"), nullable=False),
+    sa.Column("message_id", sa.String(36), nullable=False, unique=True),
+    sa.Column("blocks", sa.JSON, nullable=False),
+    sa.Column("answer", sa.String(16)),
+)
+approval_grants = sa.Table(
+    "approval_grants",
+    metadata,
+    sa.Column("tenant_id", sa.String(128), primary_key=True),
+    sa.Column("space_id", sa.String(128), primary_key=True),
+    sa.Column("user_id", sa.String(128), primary_key=True),
+    sa.Column("tool_reference", sa.String(80), primary_key=True),
+)

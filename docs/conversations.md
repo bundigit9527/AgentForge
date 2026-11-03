@@ -15,11 +15,11 @@ flowchart LR
 ```
 
 - Agent 更新时创建新版本，客户端必须提交 `expected_version`；版本冲突返回 409。
-- 会话创建时绑定 Agent 当前版本。更新 Agent 不会修改旧会话，采用新版时新建会话。
+- REST 会话创建时绑定 Agent 当前版本，更新 Agent 不改变其默认版本。原版 Rakazo RPC 发送采用最新 Agent 设置，以匹配原版设置保存行为；历史 Run 的配置与重试仍固定，不受后续编辑影响。
 - 一段会话只允许一个排队或执行中的 Run，其他新提交返回 409。成功、失败或取消后可继续提交；进程崩溃后由现有租约恢复机制接管。
 - 提交事务同时保存用户消息、Run、配置和入队事件；成功事务同时保存助手回复、Attempt 结果、Run 和最终事件。失效执行不能补写回复。
 - 取消和失败保留用户消息并附带 Run 状态，不伪造助手回复。它们不会进入后续模型历史。
-- 模型上下文使用最近 20 个成功完整轮次（40 条消息），在提交时冻结；完整历史仍可分页读取。总上下文超过现有运行限制时任务失败，目前不自动摘要。
+- 模型上下文使用最近 20 个成功完整轮次（40 条消息），在提交时冻结；完整历史仍可分页读取。新真实模型快照在请求前按字符预算裁剪最早的完整历史轮次，保留当前问题、指令和本轮工具结果；旧快照仍超限失败。完整存储历史及 Run 上下文快照不被修改，目前不自动摘要。详见 [上下文管理](context-management.md)。
 - 模拟模式可验证会话存储，但不会理解历史或角色指令；上下文传入已通过模拟 HTTP 的 Chat Completions 测试验证，真实模型仍需联调。
 
 ## 执行配置
@@ -49,13 +49,13 @@ Worker 的默认模型或限制改变时，已有任务仍使用快照。密钥�
 | `GET /api/v1/threads/{id}/messages?after=0&limit=100` | 消息及 run_status，返回 next_cursor |
 | `GET /api/v1/runs/{id}/attempts` | 执行尝试编号、状态、时间与错误码 |
 
-Agent / 会话列表按创建时间、ID 排序，以 offset 分页；消息与运行事件使用各自游标。`Idempotency-Key` 仍在身份范围内唯一，请求匹配包含 prompt 和 thread_id；重试复用原来的配置，不受默认配置变更影响。Agent 和会话创建暂不提供提交去重。
+Agent / 会话列表按创建时间、ID 排序，以 offset 分页；消息与运行事件使用各自游标。`Idempotency-Key` 仍在身份范围内唯一，请求匹配包含 prompt 和 thread_id；重试复用原来的配置，不受默认配置变更影响。REST 的 Agent 和会话创建暂不提供提交去重；RPC 创建助手使用 spawnKey，新建会话使用 requestId。
 
 ## 手动调试顺序
 
 先按 [开发入门](development.md) 配置本地数据库和开发令牌；这份说明不会自动启动服务。
 
-1. 执行 `uv run --env-file .env --locked alembic upgrade head` 升级到最新迁移（当前 `0007`）。
+1. 执行 `uv run --env-file .env --locked alembic upgrade head` 升级到最新迁移（当前 `0009`）。
 2. 按开发入门启动 API，访问 `http://127.0.0.1:8000/docs`，用开发 Bearer 令牌授权。
 3. 创建 Agent，记录 agent_id；创建会话，记录 thread_id。
 4. 向会话提交第一条 Run，执行 `uv run --env-file .env --locked agentforge-worker --once`，查询消息，预期为一条用户消息和一条助手回复。
@@ -78,4 +78,10 @@ Agent 创建和完整更新可提交 `skills` 引用列表，默认空列表。�
 
 ## Rakazo oRPC 会话映射
 
-兼容层按“租户 + 空间 + 用户 + Agent”使用独立、固定的 RPC 会话；不会任意选择已有 REST 会话，也不会将共享 Agent 所有者的聊天交给借用者。RPC 创建的会话和 Run 可通过 REST 查询。已有会话继续固定 Agent 版本，`bots.update` 不改变其版本；`threads.clear` / 新会话切换尚未接入。协议、分页和事件详见 [oRPC 接入](rakazo-orpc.md)。
+Rakazo 源码保持原版：一个 Bot 使用当前用户自己的聊天历史，界面不增加会话下拉框或版本提示。设置保存后，后续 RPC Run 固定最新 Agent 配置；已经创建或执行中的 Run 保留旧快照。REST 发送仍按 Thread 创建时的版本执行，两类调用复用同一个任务存储与 Worker，不引入第二套执行引擎。
+
+原版 `threads.clear` 同时取消排队 / 执行中的任务并清空当前消息，在同一事务中追加 `thread.cleared`。游标继续递增，后续上下文不含被清空消息；Run / Attempt / 工具调用审计仍保留，可能包含原始输入输出，因此不等于全量数据擦除。取消后的旧 Worker 无法写回结果。
+
+`agentforge.conversations.list/create/select` 作为后端扩展保留，当前仅供明确接入这些接口的客户端使用。原版 Rakazo 不会调用它们，也不会携带自定义会话前置条件；不要在原版页面打开期间从外部切换其当前会话，若确有切换需要应重新加载页面，以避免沿用旧游标。共享 Agent 的用户仍有独立选择和历史。
+
+手动验证：通过原版邮箱密码登录，完成一轮对话；修改助手描述后再发送，查询新 Run 应采用新版本，旧 Run 不变；任务排队时点击清空，应同时取消任务、清除消息，刷新后无旧消息。协议和测试步骤见 [原版 Web](rakazo-web.md)。

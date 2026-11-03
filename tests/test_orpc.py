@@ -186,7 +186,9 @@ def test_concurrent_bot_spawn_and_first_send_are_idempotent(
         assert conn.execute(sa.select(sa.func.count()).select_from(runs)).scalar_one() == 1
 
 
-def test_rpc_update_preserves_thread_version_and_profile(client, headers, repository, scope):
+def test_rpc_update_applies_next_run_while_rest_thread_default_stays_pinned(
+    client, headers, repository, scope
+):
     bot = create_bot(client, headers, instructions="old")
     changed = rpc(
         client,
@@ -197,7 +199,16 @@ def test_rpc_update_preserves_thread_version_and_profile(client, headers, reposi
     assert changed.status_code == 200
     assert changed.json()["json"]["instructions"] == "new"
     receipt = rpc(client, headers, "threads.send", {"botId": bot["id"], "text": "x"}).json()["json"]
-    assert repository.get(scope, receipt["runId"]).execution_config.instructions == "old"
+    assert repository.get(scope, receipt["runId"]).execution_config.instructions == "new"
+    assert repository.get(scope, receipt["runId"]).agent_version == 2
+    Worker(repository).run_once()
+    rest = client.post(
+        "/api/v1/runs",
+        headers=headers,
+        json={"thread_id": bot["threadId"], "prompt": "REST pinned"},
+    )
+    assert rest.status_code == 201, rest.text
+    assert repository.get(scope, rest.json()["run_id"]).execution_config.instructions == "old"
 
 
 def test_history_uses_stable_backward_cursor(client, headers, repository, scope):

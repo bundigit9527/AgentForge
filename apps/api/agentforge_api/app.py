@@ -2,6 +2,8 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 from uuid import UUID
 
+from agentforge_connectors.mcp import McpService
+from agentforge_connectors.mcp_config import McpSettings
 from agentforge_connectors.skill_hub import HttpSkillHub, SkillHubSettings
 from agentforge_contracts.conversations import (
     AgentPage,
@@ -18,6 +20,7 @@ from agentforge_contracts.identity import SetMember, SetVisibility
 from agentforge_contracts.runs import CreateRun, EventPage, EventResponse, RunResponse
 from agentforge_contracts.skills import InstallSkill, RemoteSkillPage, SkillPage
 from agentforge_contracts.tools import ToolCallPage, ToolCatalog
+from agentforge_core.effects import EffectDecision
 from agentforge_core.execution import ExecutionSnapshot
 from agentforge_core.identity import (
     AuthenticationFailed,
@@ -26,6 +29,7 @@ from agentforge_core.identity import (
     PermissionDenied,
     ResourceKind,
 )
+from agentforge_core.mcp import McpFailure
 from agentforge_core.models import TERMINAL_STATUSES, RunConflict, RunNotFound, Scope
 from agentforge_core.settings import Settings
 from agentforge_core.skills import (
@@ -39,8 +43,10 @@ from agentforge_runtime.config import ModelSettings
 from agentforge_runtime.errors import RuntimeFailure
 from agentforge_runtime.tools import BUILTIN_TOOLS, allowed_tools_from_env
 from agentforge_skills.service import SkillService
+from agentforge_storage.approvals import ApprovalRepository
 from agentforge_storage.conversations import ConversationRepository
 from agentforge_storage.database import create_database
+from agentforge_storage.effects import ExternalEffectRepository
 from agentforge_storage.identity import IdentityRepository
 from agentforge_storage.repository import RunRepository
 from agentforge_storage.schema import SCHEMA_REVISION
@@ -88,14 +94,18 @@ def create_app(
     model_settings: ModelSettings | None = None,
     allowed_tools: tuple[str, ...] | None = None,
     skill_hub: SkillHub | None = None,
+    mcp_service: McpService | None = None,
     identity_provider: IdentityProvider | None = None,
 ) -> FastAPI:
     configuration = settings or Settings.from_env()
     model_configuration = model_settings or ModelSettings.from_env(require_credentials=False)
     tool_allowlist = allowed_tools if allowed_tools is not None else allowed_tools_from_env()
     BUILTIN_TOOLS.validate_allowlist(tool_allowlist)
+    mcp = mcp_service or McpService(McpSettings.from_env())
 
     def agent_configuration(body, scope):
+        if body.mcp_tools and model_configuration.provider != "chat_completions":
+            raise HTTPException(422, "MCP tools require a Chat Completions model profile")
         try:
             BUILTIN_TOOLS.select(body.tools, tool_allowlist)
         except RuntimeFailure:
@@ -106,10 +116,14 @@ def create_app(
                 model=model_configuration.snapshot(),
                 instructions=body.instructions,
                 tools=body.tools,
+                approval_tools=body.approval_tools,
+                mcp_tools=mcp.resolve(scope, body.mcp_tools),
                 skills=skills.resolve(scope, body.skills),
             )
         except ValidationError:
-            raise HTTPException(422, "Invalid skill selection or missing required tools") from None
+            raise HTTPException(
+                422, "Invalid Agent configuration or missing required tools"
+            ) from None
 
     owned_engine = (
         None if run_repository is not None else create_database(configuration.database_url)
@@ -212,6 +226,9 @@ def create_app(
                     "messages",
                     "run_attempts",
                     "tool_calls",
+                    "external_effects",
+                    "approval_requests",
+                    "approval_grants",
                     "skill_installations",
                     "identity_tenants",
                     "identity_spaces",
@@ -220,14 +237,43 @@ def create_app(
                     "identity_tokens",
                     "resource_shares",
                     "rpc_bot_profiles",
+                    "rpc_model_preferences",
+                    "rpc_thread_selections",
                     "thread_event_heads",
                     "thread_events",
                     "browser_sessions",
+                    "web_credentials",
+                    "user_skills",
+                    "user_skill_versions",
                 ):
                     connection.execute(text(f"SELECT 1 FROM {table} LIMIT 0"))
         except SQLAlchemyError as exc:
             raise HTTPException(503, "Database schema is unavailable") from exc
         return {"status": "ok"}
+
+    @app.get("/api/v1/approval-grants")
+    def approval_grants(scope: ScopeDependency):
+        return {"items": ApprovalRepository(store).grants(scope)}
+
+    @app.delete("/api/v1/approval-grants/{tool_reference}")
+    def revoke_approval_grant(tool_reference: str, scope: ScopeDependency):
+        ApprovalRepository(store).grants(scope, remove=tool_reference)
+        return {"ok": True}
+
+    @app.get("/api/v1/runs/{run_id}/effects")
+    def list_effects(
+        run_id: str,
+        scope: ScopeDependency,
+        offset: int = Query(0, ge=0),
+        limit: int = Query(100, ge=1, le=100),
+    ):
+        return {
+            "items": ExternalEffectRepository(store).list(scope, run_id, offset=offset, limit=limit)
+        }
+
+    @app.post("/api/v1/runs/{run_id}/effects/{effect_id}/decision")
+    def decide_effect(run_id: str, effect_id: str, body: EffectDecision, scope: ScopeDependency):
+        return ApprovalRepository(store).decide(scope, run_id, effect_id, **body.model_dump())
 
     @app.get("/api/v1/me")
     def me(scope: ScopeDependency):
@@ -335,6 +381,24 @@ def create_app(
     def uninstall_skill(installation_id: UUID, scope: ScopeDependency):
         skills.repository.uninstall(scope, str(installation_id))
         return Response(status_code=204)
+
+    @app.exception_handler(McpFailure)
+    async def mcp_error(_request, exc):
+        status = {
+            "mcp_not_allowed": 404,
+            "mcp_definition_changed": 409,
+            "mcp_timeout": 504,
+            "mcp_unavailable": 503,
+        }.get(exc.code, 502)
+        return JSONResponse({"detail": exc.code}, status_code=status)
+
+    @app.get("/api/v1/mcp/servers")
+    def mcp_servers(scope: ScopeDependency):
+        return {"items": mcp.servers(scope)}
+
+    @app.get("/api/v1/mcp/servers/{server_id}/tools")
+    def mcp_tools(server_id: str, scope: ScopeDependency):
+        return {"items": [tool.describe() for tool in mcp.catalog(scope, server_id)]}
 
     @app.get("/api/v1/tools", response_model=ToolCatalog)
     def get_tools(_scope: ScopeDependency):
@@ -495,5 +559,5 @@ def create_app(
         )
 
     browser, authenticate = mount_browser_auth(app, configuration, store, identities, provider)
-    mount_orpc(app, store, model_configuration, tool_allowlist, browser, authenticate)
+    mount_orpc(app, store, model_configuration, tool_allowlist, browser, authenticate, skills)
     return app

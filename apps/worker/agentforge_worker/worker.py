@@ -3,16 +3,19 @@ import math
 from contextlib import nullcontext
 from threading import Event
 
+from agentforge_connectors.mcp import McpService
 from agentforge_core.models import RunErrorCode
 from agentforge_runtime.chat_harness import configured_harness
 from agentforge_runtime.chat_model import RuntimeFailure
 from agentforge_runtime.config import ModelSettings
 from agentforge_runtime.harness import ExecutionStopped, Harness
+from agentforge_runtime.mcp_tools import with_mcp_tools
 from agentforge_runtime.skill_tools import SKILL_READ, with_skill_reader
 from agentforge_runtime.tools import BUILTIN_TOOLS, DEFAULT_TOOLS, ToolExecutor, ToolRegistry
 from agentforge_storage.repository import RunRepository
 from sqlalchemy.exc import SQLAlchemyError
 
+from agentforge_worker.approvals import ApprovalExecution
 from agentforge_worker.lease import LeaseHeartbeat
 from agentforge_worker.tools import RunToolJournal
 
@@ -30,12 +33,14 @@ class Worker:
         harness_factory=None,
         tool_registry: ToolRegistry = BUILTIN_TOOLS,
         allowed_tools: tuple[str, ...] = DEFAULT_TOOLS,
+        mcp_service: McpService | None = None,
     ):
         interval = lease_seconds / 3 if heartbeat_interval is None else heartbeat_interval
         if lease_seconds < 1 or not math.isfinite(interval) or not 0 < interval < lease_seconds:
             raise ValueError("Heartbeat interval must be positive and shorter than the lease")
         tool_registry.validate_allowlist(allowed_tools)
         self.tool_registry = tool_registry
+        self.mcp_service = mcp_service or McpService()
         self.allowed_tools = allowed_tools
         self.repository = repository
         self.harness = harness
@@ -64,6 +69,17 @@ class Worker:
                 registry = self.tool_registry
                 runtime_tools = snapshot.tools
                 runtime_allowed = self.allowed_tools
+                mcp_refs = tuple(tool.reference for tool in snapshot.mcp_tools)
+                if snapshot.mcp_tools:
+                    registry = with_mcp_tools(
+                        registry,
+                        self.mcp_service,
+                        claim.run.scope,
+                        snapshot.mcp_tools,
+                        owns_execution,
+                    )
+                    runtime_tools = (*runtime_tools, *mcp_refs)
+                    runtime_allowed = (*runtime_allowed, *mcp_refs)
                 if snapshot.skills:
                     registry = with_skill_reader(registry, snapshot.skills)
                     runtime_tools = (*runtime_tools, SKILL_READ)
@@ -74,7 +90,10 @@ class Worker:
                     allowed=runtime_allowed,
                     journal=RunToolJournal(self.repository, claim),
                     checkpoint=owns_execution,
+                    read_allowed=mcp_refs,
                 )
+                if snapshot.approval_tools:
+                    executor.approvals = ApprovalExecution(self.repository, claim)
                 try:
                     runtime = (
                         nullcontext(self.harness)
@@ -95,6 +114,14 @@ class Worker:
                         on_model=lambda **data: (
                             not heartbeat.lost.is_set()
                             and self.repository.record_model(claim, **data)
+                        ),
+                        on_context=lambda **data: (
+                            not heartbeat.lost.is_set()
+                            and self.repository.record_context(claim, **data)
+                        ),
+                        on_text=lambda **data: (
+                            not heartbeat.lost.is_set()
+                            and self.repository.record_text(claim, **data)
                         ),
                         execution_config=snapshot,
                         context=claim.run.context,

@@ -7,6 +7,7 @@ from agentforge_core.execution import ContextMessage, ExecutionSnapshot
 class RunStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
+    WAITING_INPUT = "waiting_input"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -17,6 +18,13 @@ TERMINAL_STATUSES = {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED}
 
 class RunErrorCode(StrEnum):
     EXECUTION_FAILED = "execution_failed"
+    EFFECT_UNCERTAIN = "effect_uncertain"
+    MCP_UNAVAILABLE = "mcp_unavailable"
+    MCP_TIMEOUT = "mcp_timeout"
+    MCP_INVALID_RESPONSE = "mcp_invalid_response"
+    MCP_TOOL_FAILED = "mcp_tool_failed"
+    MCP_DEFINITION_CHANGED = "mcp_definition_changed"
+    MCP_NOT_ALLOWED = "mcp_not_allowed"
     ACCESS_REVOKED = "access_revoked"
     MODEL_TIMEOUT = "model_timeout"
     MODEL_UNAVAILABLE = "model_unavailable"
@@ -25,6 +33,7 @@ class RunErrorCode(StrEnum):
     MODEL_INVALID_RESPONSE = "model_invalid_response"
     MODEL_REFUSED = "model_refused"
     MODEL_LIMIT_EXCEEDED = "model_limit_exceeded"
+    MODEL_CONTEXT_LIMIT_EXCEEDED = "model_context_limit_exceeded"
     TOOL_NOT_ALLOWED = "tool_not_allowed"
     TOOL_INVALID_ARGUMENTS = "tool_invalid_arguments"
     TOOL_EXECUTION_FAILED = "tool_execution_failed"

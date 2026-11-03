@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 import pytest
 from agentforge_api.orpc import sse
+from agentforge_storage.passwords import PasswordLogin
 from agentforge_worker.worker import Worker
 from fastapi import Request
 
@@ -30,7 +31,24 @@ def test_real_better_auth_session_client(browser_client, repository, people):
     run_bridge(browser_client, repository, browser=True)
 
 
-def run_bridge(client, repository, *, browser=False):
+def test_original_password_client(browser_client, repository, people):
+    PasswordLogin(people[0]).set_password(
+        people[1]["alice"], "native@example.test", "test-native-password-only"
+    )
+    run_bridge(browser_client, repository, browser=True, native=True)
+
+
+def run_bridge(
+    client,
+    repository,
+    *,
+    browser=False,
+    native=False,
+    model_chat=False,
+    worker=None,
+    stream_control=None,
+    approval_mode=False,
+):
     configured = os.environ.get("AGENTFORGE_RAKAZO_ROOT")
     if not configured:
         pytest.skip("Set AGENTFORGE_RAKAZO_ROOT for pinned Rakazo client interoperability")
@@ -95,7 +113,14 @@ def run_bridge(client, repository, *, browser=False):
         stderr=subprocess.PIPE,
         text=True,
         bufsize=1,
-        env={**os.environ, **({"AGENTFORGE_BROWSER_INTEROP": "1"} if browser else {})},
+        env={
+            **os.environ,
+            **({"AGENTFORGE_BROWSER_INTEROP": "1"} if browser else {}),
+            **({"AGENTFORGE_NATIVE_LOGIN": "1"} if native else {}),
+            **({"AGENTFORGE_MODEL_INTEROP": "1"} if model_chat else {}),
+            **({"AGENTFORGE_STREAM_INTEROP": "1"} if stream_control else {}),
+            **({"AGENTFORGE_APPROVAL_INTEROP": "1"} if approval_mode else {}),
+        },
     ) as process:
         complete = False
         try:
@@ -110,8 +135,10 @@ def run_bridge(client, repository, *, browser=False):
                     if message["type"] == "complete":
                         complete = True
                         break
-                    if message["type"] == "worker":
-                        assert Worker(repository).run_once()
+                    if message["type"] == "stream":
+                        result = stream_control(message)
+                    elif message["type"] == "worker":
+                        assert (worker or Worker(repository)).run_once()
                         result = {"ok": True}
                     elif urlsplit(message["url"]).path == "/rpc/threads/subscribe":
                         result = asyncio.run(stream_response(message))

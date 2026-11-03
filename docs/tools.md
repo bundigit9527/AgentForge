@@ -71,3 +71,9 @@ SQLite 196 项通过、5 项 PostgreSQL 专用用例跳过；独立 PostgreSQL 1
 ## Skill 读取工具
 
 Skill 正文与实际 Tool 分开管理。Worker 在 Run 绑定 Skill 时提供内部 `skill_read@1`，只能读取本次快照中的技能，仍走统一工具记录和租约检查；这项纯读取能力不授予任何业务工具。无 Skill 的 Run 不暴露此工具。Skill 的 `required_tools` 由绑定时校验，不自动扩大部署允许列表。接口及流程见 [Skill 安装](skills.md)。
+
+## MCP 只读工具
+
+新增的 MCP 工具不是 pure 工具。它们通过部署配置、调用者范围和快照校验后，以 effect=read 注册；ToolExecutor 还要求 Worker 明确授予 read_allowed，任意 read 或 write 定义仍不能执行。
+
+本地工具继续使用 tools，远程定义保存于 execution_config.mcp_tools。两类工具合计最多 16 个，MCP 最多 8 个；skill_read 是内部按需提供的工具。MCP 工具名称由服务 ID 和远端名称摘要生成，审计中的名称可对应 Run 快照里的 server_id / tool_name。输入经受限 JSON Schema 校验；结果经协议、大小和结构验证后进入同一 tool_calls 表，不增加数据库表。配置和边界见 [MCP](mcp.md)。

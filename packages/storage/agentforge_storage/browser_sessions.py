@@ -12,6 +12,7 @@ from agentforge_storage.schema import (
     identity_spaces,
     identity_tokens,
     identity_users,
+    web_credentials,
 )
 from agentforge_storage.thread_feed import iso
 
@@ -114,12 +115,18 @@ class BrowserSessions:
                     identity_spaces.c.space_id == scope.space_id,
                 )
             ).scalar_one_or_none()
+            configured_email = conn.execute(
+                sa.select(web_credentials.c.email).where(
+                    web_credentials.c.tenant_id == scope.tenant_id,
+                    web_credentials.c.user_id == scope.user_id,
+                )
+            ).scalar_one_or_none()
         # Display-only address for Better Auth UI; never an identity lookup or verified email.
         address = digest(scope.tenant_id + "\0" + scope.user_id)[:24] + "@agentforge.invalid"
         return {
             "id": scope.user_id,
             "name": user["display_name"] if user else scope.user_id,
-            "email": address,
+            "email": configured_email or address,
             "emailVerified": False,
             "image": None,
         }, space or scope.space_id

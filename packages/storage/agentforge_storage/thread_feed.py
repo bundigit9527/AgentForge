@@ -26,7 +26,12 @@ def message_view(row):
 
 
 def append(connection, run, kind, payload):
-    tid = run["thread_id"]
+    return append_thread_event(
+        connection, run["thread_id"], kind, payload, run["updated_at"], run_id=run["run_id"]
+    )
+
+
+def append_thread_event(connection, tid, kind, payload, now, *, run_id=None):
     insert = pg_insert if connection.dialect.name == "postgresql" else sqlite_insert
     seq = connection.execute(
         insert(thread_event_heads)
@@ -40,17 +45,42 @@ def append(connection, run, kind, payload):
         thread_events.insert().values(
             thread_id=tid,
             sequence=seq,
-            run_id=run["run_id"],
+            run_id=run_id,
             event_type=kind,
             payload=payload,
-            created_at=run["updated_at"],
+            created_at=now,
         )
     )
+    return seq
 
 
 def project(connection, run, event_type, data):
     if not run["thread_id"]:
         return
+    if event_type == "model_text":
+        append(
+            connection,
+            run,
+            "thread.progress",
+            {
+                "text" if data["reset"] else "delta": data["text"],
+                "streaming": True,
+                "attempt": data["attempt"],
+            },
+        )
+        return
+    if event_type == "running" and run["attempt"] > 1:
+        # A reclaimed attempt must replace the former owner's transient draft.
+        append(
+            connection,
+            run,
+            "thread.message.updated",
+            {
+                "messageId": "progress:" + run["run_id"],
+                "role": "bot",
+                "blocks": [],
+            },
+        )
     if event_type in {"queued", "succeeded"}:
         role = "user" if event_type == "queued" else "assistant"
         row = (
@@ -69,6 +99,8 @@ def project(connection, run, event_type, data):
             append(connection, run, "thread.message.created", payload)
     kind = {
         "queued": "run.started",
+        "waiting_input": "run.waiting_input",
+        "approval_answered": "run.started",
         "running": "run.started",
         "succeeded": "run.completed",
         "failed": "run.failed",

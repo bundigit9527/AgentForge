@@ -110,6 +110,28 @@ class SkillRepository:
             )
         return [snapshot(row) for row in rows]
 
+    def catalog(self, scope, *, connection=None):
+        """Native client catalog, also resolved inside a new run's transaction."""
+        if connection is None:
+            with self.engine.connect() as conn:
+                return self.catalog(scope, connection=conn)
+        self.authorization.require(connection, scope)
+        rows = (
+            connection.execute(
+                sa.select(skill_installations)
+                .where(
+                    self.authorization.visible(
+                        skill_installations, scope, "skill", "installation_id"
+                    ),
+                    skill_installations.c.enabled.is_(True),
+                )
+                .order_by(skill_installations.c.installed_at, skill_installations.c.installation_id)
+            )
+            .mappings()
+            .all()
+        )
+        return [(snapshot(row), row["installed_at"], row["installed_at"]) for row in rows]
+
     def uninstall(self, scope, installation_id):
         with self.engine.begin() as connection:
             self.authorization.require(connection, scope, write=True)
