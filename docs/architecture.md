@@ -24,7 +24,7 @@
 
 当前已有 Python API、单次 / 持续运行 Worker、模拟 / Chat Completions Harness、任务与事件存储及离线测试。已增加版本化 Agent、会话、消息、执行尝试和运行配置快照，行为见 [Agent 与会话](conversations.md)。已有纯函数工具注册、允许列表和执行记录，详见 [版本化工具](tools.md)；本地用户、空间角色、可撤销令牌与显式空间共享已实现，见 [身份与权限](identity.md)；企业单点登录和审批仍未实现。已实现按身份范围隔离的提交去重、SSE 实时事件续传和后台租约续期。框架采用 FastAPI，数据访问和迁移采用 SQLAlchemy / Alembic；任务表兼任持久化队列。具体范围见 [开发入门](development.md) 和 [任务执行协议](task-execution.md)。
 
-已提供仅包含 PostgreSQL 的本地开发 Compose 配置。Chat Completions 适配器、多轮工具调用和用量事件已实现，配置与边界见 [模型路由](model-routing.md)，真实企业路由待联调。企业单点登录、记忆、Supervisor、前端及应用部署文件仍未实现。下面的架构图描述整体目标，不能视为所有模块已经可运行；已有 SQLite 离线验证及 PostgreSQL 17.11 独立集成验证，生产容量、真实模型与外部业务仍需另外验收。
+已提供仅包含 PostgreSQL 的本地开发 Compose 配置。Chat Completions 适配器、多轮工具调用和用量事件已实现，配置与边界见 [模型路由](model-routing.md)，真实企业路由待联调。Supervisor 已通过受控 MCP 接入一次性 Docker 数值计算，详见 [执行边界](../apps/supervisor/README.md)。企业单点登录、长期记忆、通用 Computer 和生产部署仍待建设。下面的架构图描述整体目标，不能视为所有模块已经可运行；已有 SQLite 离线验证及 PostgreSQL 17.11 独立集成验证，生产容量、真实模型与外部业务仍需另外验收。
 
 新增 `/rpc` 为协议适配层，与 `/api/v1` 共用存储授权、事务和 Worker；浏览器登录会话兼容原版 Better Auth 客户端读取与退出，身份仍由 AgentForge 本地数据库验证。会话事件流跨多轮 Run 持久化，独立于 REST 的 Run 事件游标。当前只覆盖核心聊天，完整边界见 [oRPC 接入](rakazo-orpc.md)。
 

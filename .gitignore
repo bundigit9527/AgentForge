@@ -226,3 +226,6 @@ __marimo__/
 
 # Deployment-owned MCP endpoints and grants
 mcp.local.json
+
+# Local Docker Supervisor credential
+.env.supervisor

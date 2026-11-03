@@ -1,0 +1,13 @@
+{
+  "servers": [{
+    "server_id": "computer",
+    "tenant_id": "local",
+    "space_id": "development",
+    "users": ["developer"],
+    "url": "http://127.0.0.1:8766/mcp",
+    "allow_insecure_http": true,
+    "token_env": "AGENTFORGE_MCP_COMPUTER_TOKEN",
+    "read_tools": {"summarize_numbers": 1},
+    "timeout_seconds": 20
+  }]
+}

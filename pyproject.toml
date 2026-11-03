@@ -36,11 +36,12 @@ agentforge-admin = "agentforge_api.admin:main"
 packages = [
     "agentforge_api", "agentforge_worker", "agentforge_core",
     "agentforge_contracts", "agentforge_storage", "agentforge_runtime",
-    "agentforge_skills", "agentforge_connectors",
+    "agentforge_skills", "agentforge_connectors", "agentforge_supervisor",
 ]
 
 [tool.setuptools.package-dir]
 agentforge_api = "apps/api/agentforge_api"
+agentforge_supervisor = "apps/supervisor/agentforge_supervisor"
 agentforge_worker = "apps/worker/agentforge_worker"
 agentforge_core = "packages/core/agentforge_core"
 agentforge_contracts = "packages/contracts/agentforge_contracts"

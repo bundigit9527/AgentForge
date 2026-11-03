@@ -23,7 +23,7 @@ AgentForge 致力于连接企业知识、业务工作流、Agent 和 Skill，让
 - [Rakazo oRPC 接入](docs/rakazo-orpc.md)：Python 兼容入口、原版邮箱密码登录、支持范围和手动联调。
 - [Rakazo 架构对齐](docs/rakazo-alignment.md)：模块映射、已实现边界与后续差距。
 
-架构按 Rakazo 的 API → Worker / Harness → 受控工具 → Supervisor / Computer 职责边界推进；后两者尚未实现。Skill 沿用目录与 skill_read 按需读取模式，支持本地内置与广场安装副本。
+架构按 Rakazo 的 API → Worker / Harness → 受控工具 → Supervisor / Computer 职责边界推进；已可通过独立 Supervisor 在一次性 Docker Computer 中执行固定数值统计，详见 [配置与验收](apps/supervisor/README.md)。Skill 沿用目录与 skill_read 按需读取模式，支持本地内置与广场安装副本。
 
 ## 当前可验证的闭环
 

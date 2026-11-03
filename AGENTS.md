@@ -6,7 +6,7 @@
 
 - AgentForge（智构）是采用 MIT 协议的企业级 Agent 平台，后端统一使用 Python。用户已确认优先完善 Python Harness，暂不为执行引擎引入 Node.js / Pi；前端既有工具链不受此约束影响。
 - 当前已实现 API、Worker、模拟 Harness、数据库任务队列、任务与事件持久化、提交去重、SSE 续传和租约续期。已有版本化 Agent、会话、消息、执行尝试和不可变运行快照；原版 Rakazo Web 支持邮箱密码登录、设置保存、聊天和清空；同一会话串行提交，历史上下文固定最近 20 个成功轮次；新真实模型快照支持字符预算和完整轮次裁剪，旧快照保持 reject 策略。裁剪不是语义摘要或长期记忆，详见 docs/context-management.md。
-- 已实现可配置的 Chat Completions 模型适配器、多轮工具循环和用量事件，默认保持模拟模式；DeepSeek 官方接口已在临时 SQLite 库通过两轮聊天与工具回传验收，企业路由与生产验证仍待完成。已有服务端模型目录、用户默认模型与 Bot 模型选择，DeepSeek 协议模式发送 max_tokens 并禁用思考模式；已支持可选 SSE 文本流、受限批量持久化、原版 thread.progress 与刷新恢复；不要宣称已支持思考字段、页面凭据管理或强制中断上游推理。企业单点登录、长期记忆、Supervisor、Computer 工具沙箱、Web 和桌面端仍属后续建设内容。目录中的职责说明不代表功能已经实现。
+- 已实现可配置的 Chat Completions 模型适配器、多轮工具循环和用量事件，默认保持模拟模式；DeepSeek 官方接口已在临时 SQLite 库通过两轮聊天与工具回传验收，企业路由与生产验证仍待完成。已有服务端模型目录、用户默认模型与 Bot 模型选择，DeepSeek 协议模式发送 max_tokens 并禁用思考模式；已支持可选 SSE 文本流、受限批量持久化、原版 thread.progress 与刷新恢复；不要宣称已支持思考字段、页面凭据管理或强制中断上游推理。企业单点登录、长期记忆、通用 Computer 工具沙箱、独立 Web 和桌面端仍属后续建设内容。目录中的职责说明不代表功能已经实现。
 - 已实现纯函数工具注册、Agent 工具子集、部署级允许列表、调用记录与结果验证；远程 MCP 已通过官方 Python SDK 接入 Streamable HTTP，只允许部署配置审定的只读、幂等工具，并核对服务端提示；已有本地身份、admin / member / viewer 空间角色和显式空间共享；企业单点登录仍待接入；审批暂停恢复与外部操作台账见本文末尾。
 - Web 与桌面端保留 React / TypeScript、Electron 的技术方向；不要把“后端使用 Python”扩大为重写所有客户端。
 - 当前离线测试使用 SQLite；生产数据库目标是 PostgreSQL。明确区分离线验证、真实数据库验证和生产验证。
@@ -126,5 +126,5 @@ waiting_input 保留 Thread 占用但释放 Worker 租约；审批回答与卡�
 正常审批恢复不消耗崩溃重试预算。不得让模型重新生成已批准的参数或为重试更换 operation_key。
 已确认结果可复用；dispatched 且结果未知的操作必须停止，禁止自动重发。
 始终允许规则按用户、空间、工具版本隔离，提供 REST 撤销；审批不扩展工具权限。
-目前只支持纯函数/受控只读 MCP；尚无外部写连接器、自动审核或 Computer。
+目前只支持纯函数/受控只读 MCP；已可经 MCP 调用独立 Docker Computer 进行固定数值计算。外部写连接器、自动审核及通用脚本执行仍待接入。
 详情及手动验收见 docs/external-effects.md。原版 Rakazo 源码不变。

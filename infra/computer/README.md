@@ -1,5 +1,5 @@
-# Computer 镜像（待实现）
+# Docker Computer
 
-用于隔离脚本、浏览器和文件处理，按授权范围分配独立工作目录及资源限额。Computer 不持有平台数据库凭据。
+当前使用部署者预置的、按镜像 ID 固定的 Python 3 镜像运行一次性统计任务。将本目录的 servers.example.json 条目加入 MCP 服务配置，按实际用户授权。
 
-当前没有 Dockerfile，不构建或启动镜像。
+配置、运行和验收步骤见 [Supervisor 说明](../../apps/supervisor/README.md)。
