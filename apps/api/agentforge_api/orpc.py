@@ -15,19 +15,23 @@ from agentforge_contracts.rakazo import (
     CreateBot,
     CreateConversation,
     CreateSkill,
+    DesktopFile,
     Empty,
     History,
+    ListDesktopFiles,
     ListSpaceArtifacts,
     ReleaseDesktop,
     RemoveSkill,
     SelectConversation,
     Send,
+    SetComputer,
     SetDefaultModel,
     SkillTarget,
     Subscribe,
     Target,
     UpdateBot,
     UpdateSkill,
+    UploadDesktopFile,
 )
 from agentforge_core.execution import ExecutionSnapshot
 from agentforge_core.identity import (
@@ -47,7 +51,7 @@ from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 
-from agentforge_api.desktop import mount_desktop
+from agentforge_api.desktop import DesktopFileInvalid, mount_desktop
 from agentforge_api.rakazo_models import ModelRpcAdapter
 from agentforge_api.rakazo_skills import SkillRpcAdapter
 
@@ -77,14 +81,30 @@ def failure(exc):
     if isinstance(exc, RunConflict) and str(exc) in {
         "The selected conversation changed; refresh and try again",
         "Stop current work before changing or clearing the conversation",
+        "Release the computer first",
+        "Stop the private computer first",
+        "Stop the bot first",
+        "Desktop pool is full",
+        "Team Computer requires a configured desktop pool",
         "Conversation request was already used",
         "Conversation request was already used with another title",
     }:
         return RpcError(409, "CONFLICT", str(exc))
     for cls, status, code, message in (
         (AuthenticationFailed, 401, "UNAUTHORIZED", "Invalid or expired credentials"),
-        (AuthenticationUnavailable, 503, "SERVICE_UNAVAILABLE", "Authentication unavailable"),
+        (
+            AuthenticationUnavailable,
+            503,
+            "SERVICE_UNAVAILABLE",
+            "Authentication unavailable",
+        ),
         (PermissionDenied, 403, "FORBIDDEN", "Insufficient permission"),
+        (
+            DesktopFileInvalid,
+            422,
+            "UNPROCESSABLE_CONTENT",
+            "Unsupported file, size or path",
+        ),
         (RunNotFound, 404, "NOT_FOUND", "Resource not found"),
         (RunConflict, 409, "CONFLICT", "Resource state conflict"),
         (
@@ -95,7 +115,12 @@ def failure(exc):
         ),
         (ValidationError, 422, "UNPROCESSABLE_CONTENT", "Invalid procedure input"),
         (SQLAlchemyError, 503, "SERVICE_UNAVAILABLE", "Storage unavailable"),
-        (RuntimeFailure, 422, "UNPROCESSABLE_CONTENT", "Invalid execution configuration"),
+        (
+            RuntimeFailure,
+            422,
+            "UNPROCESSABLE_CONTENT",
+            "Invalid execution configuration",
+        ),
     ):
         if isinstance(exc, cls):
             return RpcError(status, code, message)
@@ -134,7 +159,11 @@ async def subscribe_events(
             if await run_in_threadpool(authorize) != scope:
                 raise AuthenticationFailed()
             batch = await run_in_threadpool(
-                service.events, scope, bot_id, cursor, expected_thread_id=expected_thread_id
+                service.events,
+                scope,
+                bot_id,
+                cursor,
+                expected_thread_id=expected_thread_id,
             )
             for event in batch:
                 if await request.is_disconnected():
@@ -158,13 +187,13 @@ async def subscribe_events(
         await asyncio.sleep(poll_interval)
 
 
-async def read_input(request):
+async def read_input(request, limit=128000):
     if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
         raise RpcError(415, "UNSUPPORTED_MEDIA_TYPE", "Expected application/json")
     body = bytearray()
     async for chunk in request.stream():
         body.extend(chunk)
-        if len(body) > 128000:
+        if len(body) > limit:
             raise RpcError(413, "PAYLOAD_TOO_LARGE", "Request too large")
     try:
         obj = json.loads(body, parse_constant=lambda _: (_ for _ in ()).throw(ValueError()))
@@ -211,9 +240,7 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
             "hostCredentialSource": None,
             "computerHost": None,
             "canChooseHostComputer": False,
-            "sandboxProvider": "docker"
-            if desktop and desktop.assigned(desktop.assignment(), scope)
-            else "unavailable",
+            "sandboxProvider": "docker" if desktop and desktop.select(scope) else "unavailable",
             "avatarStyle": "robot",
             "billingEnabled": False,
         }
@@ -238,16 +265,46 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
     def dispatch(scope, procedure, data, expected_thread_id=None, cookie=None):
         def snapshot(bot):
             snap = service.snapshot(scope, bot, expected_thread_id=expected_thread_id)
-            return desktop.snapshot(scope, bot, cookie, snap) if desktop else snap
+            slot = desktop.select(scope, bot) if desktop else None
+            return slot.snapshot(scope, bot, cookie, snap) if slot else snap
 
         if desktop and procedure.startswith("computer/"):
             action = procedure.removeprefix("computer/")
+            file_models = {
+                "files": ListDesktopFiles,
+                "readFile": DesktopFile,
+                "downloadFile": DesktopFile,
+                "uploadFile": UploadDesktopFile,
+            }
+            if action in file_models:
+                target = file_models[action].model_validate(data)
+                bot = str(target.botId)
+                slot = desktop.select(scope, bot)
+                if slot is None:
+                    raise RunNotFound()
+                if slot.owner:
+                    return slot.files(
+                        action, scope, bot, cookie, target.model_dump(exclude={"botId"})
+                    )
             if action == "updates":
                 Empty.model_validate(data)
                 return []
-            if action in {"status", "boot", "release", "takeover", "heartbeat", "screenUrl"}:
+            if action in {
+                "status",
+                "boot",
+                "stop",
+                "release",
+                "takeover",
+                "heartbeat",
+                "screenUrl",
+            }:
                 model = ReleaseDesktop if action == "release" else Target
-                return desktop.handle(action, scope, str(model.model_validate(data).botId), cookie)
+                bot = str(model.model_validate(data).botId)
+                slot = desktop.select(scope, bot)
+                if slot is None:
+                    raise RunNotFound()
+                if action != "stop" or slot.owner:
+                    return slot.handle(action, scope, bot, cookie)
         if procedure == "health":
             Empty.model_validate(data)
             return {"ok": True, "version": "agentforge-0.1.0"}
@@ -325,20 +382,33 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
                 tools=("example_report@1",) if "example_report@1" in tool_allowlist else (),
             )
             return service.create_bot(scope, body.model_dump(mode="json"), config)
+        if procedure == "bots/setComputer":
+            body = SetComputer.model_validate(data)
+            bot = str(body.botId)
+            if desktop:
+                return desktop.switch(service, scope, bot, body.mode)
+            return service.set_computer(scope, bot, body.mode)
         if procedure == "bots/update":
             body = UpdateBot.model_validate(data)
             try:
                 return service.update_bot(
-                    scope, body.model_dump(mode="json", exclude_unset=True), model_configuration
+                    scope,
+                    body.model_dump(mode="json", exclude_unset=True),
+                    model_configuration,
                 )
             except ValueError:
                 raise RpcError(
-                    422, "UNPROCESSABLE_CONTENT", "Model selection is configured by the server"
+                    422,
+                    "UNPROCESSABLE_CONTENT",
+                    "Model selection is configured by the server",
                 ) from None
         if procedure == "agentforge/conversations/list":
             body = ConversationList.model_validate(data)
             return service.conversations_page(scope, str(body.botId), body.offset, body.limit)
-        if procedure in {"agentforge/conversations/create", "agentforge/conversations/select"}:
+        if procedure in {
+            "agentforge/conversations/create",
+            "agentforge/conversations/select",
+        }:
             model = CreateConversation if procedure.endswith("/create") else SelectConversation
             return service.change_conversation(
                 scope,
@@ -381,7 +451,9 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
             )
         if procedure == "threads/clear":
             return service.clear(
-                scope, str(Target.model_validate(data).botId), expected_thread_id=expected_thread_id
+                scope,
+                str(Target.model_validate(data).botId),
+                expected_thread_id=expected_thread_id,
             )
         targets = {
             "bots/get": service.bot,
@@ -399,7 +471,10 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
         if procedure == "threads/messages":
             body = History.model_validate(data)
             return service.history(
-                scope, str(body.botId), body.before, expected_thread_id=expected_thread_id
+                scope,
+                str(body.botId),
+                body.before,
+                expected_thread_id=expected_thread_id,
             )
         if procedure == "threads/send":
             body = Send.model_validate(data)
@@ -422,7 +497,9 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
             Empty.model_validate(data)
             return []
         raise RpcError(
-            501, "NOT_IMPLEMENTED", "Procedure is not supported by this AgentForge version"
+            501,
+            "NOT_IMPLEMENTED",
+            "Procedure is not supported by this AgentForge version",
         )
 
     @app.api_route("/rpc/{procedure:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
@@ -440,13 +517,20 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
                     expected_thread_id = str(UUID(expected_thread_id))
                 except ValueError:
                     raise RpcError(
-                        422, "UNPROCESSABLE_CONTENT", "Invalid conversation precondition"
+                        422,
+                        "UNPROCESSABLE_CONTENT",
+                        "Invalid conversation precondition",
                     ) from None
-            data = await read_input(request)
+            data = await read_input(
+                request, 14_050_000 if procedure == "computer/uploadFile" else 128000
+            )
             if procedure == "threads/subscribe":
                 body = Subscribe.model_validate(data)
                 head = await run_in_threadpool(
-                    service.head, scope, str(body.botId), expected_thread_id=expected_thread_id
+                    service.head,
+                    scope,
+                    str(body.botId),
+                    expected_thread_id=expected_thread_id,
                 )
                 cursor = body.cursor
                 if "last-event-id" in request.headers:
@@ -470,11 +554,18 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
                     headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
                 )
             result = await run_in_threadpool(
-                dispatch, scope, procedure, data, expected_thread_id, request.cookies.get(COOKIE)
+                dispatch,
+                scope,
+                procedure,
+                data,
+                expected_thread_id,
+                request.cookies.get(COOKIE),
             )
             return JSONResponse({"json": result}, headers={"Cache-Control": "no-store"})
         except Exception as exc:
             error = failure(exc)
             return JSONResponse(
-                error.envelope(), status_code=error.status, headers={"Cache-Control": "no-store"}
+                error.envelope(),
+                status_code=error.status,
+                headers={"Cache-Control": "no-store"},
             )

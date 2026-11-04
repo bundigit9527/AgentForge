@@ -10,6 +10,7 @@ import socketserver
 import subprocess
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.request import ProxyHandler, build_opener
 from uuid import UUID, uuid4
@@ -18,6 +19,8 @@ PROGRAM = """
 set -eu
 export HOME=/tmp/home DISPLAY=:1
 mkdir -p "$HOME" /tmp/.X11-unix
+ln -s /workspace "$HOME/workspace"
+cd /workspace
 Xvfb :1 -screen 0 1280x800x24 -nolisten tcp -noreset &
 until xdpyinfo >/dev/null 2>&1; do sleep .1; done
 fluxbox >/tmp/fluxbox.log 2>&1 &
@@ -123,28 +126,12 @@ class RelayConnection(socketserver.StreamRequestHandler):
             self.server.slots.release()
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("tenant", "space", "user", "bot", "manifest"):
-        parser.add_argument("--" + name, required=True)
-    args = parser.parse_args()
-    image = os.environ.get("AGENTFORGE_COMPUTER_IMAGE", "")
-    if not re.fullmatch(r"sha256:[a-f0-9]{64}", image):
-        parser.error("Specify a local image ID in AGENTFORGE_COMPUTER_IMAGE")
-    bot = str(UUID(args.bot))
-    manifest = Path(args.manifest)
-    if manifest.parent.stat().st_mode & 0o077 or manifest.exists():
-        parser.error("Choose a fresh manifest inside a private directory (0700)")
-    os.umask(0o077)
-    generation = uuid4().hex
+@contextmanager
+def running_desktop(args, bot, image, manifest, generation):
     name = "agentforge-desktop-" + generation
     relay = LoopbackRelay(name)
     view, control = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
 
-    def stop(*_):
-        raise SystemExit()
-
-    signal.signal(signal.SIGTERM, stop)
     threading.Thread(target=relay.serve_forever, daemon=True).start()
     try:
         docker(
@@ -159,6 +146,8 @@ def main():
             "--read-only",
             "--tmpfs",
             "/tmp:rw,nosuid,nodev,size=256m,mode=1777",
+            "--tmpfs",
+            "/workspace:rw,nosuid,nodev,noexec,size=64m,mode=0700,uid=1000,gid=1000",
             "--user",
             "1000:1000",
             "--cap-drop=ALL",
@@ -212,14 +201,46 @@ def main():
         temp.write_text(json.dumps(entry))
         temp.replace(manifest)
         print(f"Desktop ready for bot {bot}", flush=True)
-        subprocess.run(["docker", "wait", name], check=True, stdout=subprocess.DEVNULL)
+        yield name
     finally:
         manifest.unlink(missing_ok=True)
         subprocess.run(
-            ["docker", "rm", "-f", name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            ["docker", "rm", "-f", name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
         relay.shutdown()
         relay.server_close()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    for name in ("tenant", "space", "user", "bot", "manifest"):
+        parser.add_argument("--" + name, required=True)
+    parser.add_argument("--on-demand", action="store_true")
+    args = parser.parse_args()
+    image = os.environ.get("AGENTFORGE_COMPUTER_IMAGE", "")
+    if not re.fullmatch(r"sha256:[a-f0-9]{64}", image):
+        parser.error("Specify a local image ID in AGENTFORGE_COMPUTER_IMAGE")
+    bot = str(UUID(args.bot))
+    manifest = Path(args.manifest)
+    if manifest.parent.stat().st_mode & 0o077:
+        parser.error("Choose a fresh manifest inside a private directory (0700)")
+    if not args.on_demand and manifest.exists():
+        parser.error("Manifest already exists")
+    os.umask(0o077)
+    if args.on_demand:
+        from agentforge_supervisor.desktop_slot import serve
+
+        serve(args, bot, image, manifest)
+        return
+
+    def stop(*_):
+        raise SystemExit()
+
+    signal.signal(signal.SIGTERM, stop)
+    with running_desktop(args, bot, image, manifest, uuid4().hex) as name:
+        subprocess.run(["docker", "wait", name], check=True, stdout=subprocess.DEVNULL)
 
 
 if __name__ == "__main__":

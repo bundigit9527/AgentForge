@@ -79,3 +79,23 @@ uv run --locked uvicorn agentforge_supervisor.finance_news:create_app --factory 
 可为一台已分配的开发桌面启用独立的 `agentforge_supervisor.visible_news:create_app` MCP 服务。使用同一个 `AGENTFORGE_DESKTOP_MANIFEST`；API 和该 Supervisor 共享专用的 `AGENTFORGE_DESKTOP_READER_TOKEN`，API、Worker 和该服务共享另一个专用的 `AGENTFORGE_MCP_SCREENNEWS_TOKEN`（均至少 32 字符）。本机示例服务端口为 8768，API 为 8000。部署者为该服务的 MCP 配置指定桌面对应的 tenant_id、space_id、单一 users 和 bot_id，绑定 `browse_finance_news` 版本 1，超时建议 45 秒。执行器会校验 Bot 绑定。
 
 使用查看模式发送财经新闻请求。Agent 在无头模式关闭的 Chromium 中访问中新网财经频道，读取网页 DOM 的时间和标题，滚动并点击最新匹配条目，成功打开原文后返回链接。Supervisor 仅为该标签页代理固定财经频道和一篇原文的 GET 请求，验证上游 HTTPS；网页脚本、表单和外部资源被限制。用户持有键鼠控制权时，需先交还才能检索。
+
+### 按需启动与回收专属桌面
+
+本机单进程 API 可管理多个桌面名额。每个名额使用独立的私有目录（0700）和一个轻量 Supervisor 进程，在用户点击启动前不占用 Docker 容器。API 与 Supervisor 以同一主机账号通过本地 Unix socket 通信。
+
+1. 为每个名额创建短路径的私有目录。为该用户和 Bot 运行上述桌面命令，追加 `--on-demand`，将 `--manifest` 指向该目录内新的 `desktop.json`。保留目录供 Supervisor 重启时回收上次中断的容器。
+2. 仅对 API 设置 `AGENTFORGE_DESKTOP_SLOTS` 指向 JSON 名册，取代 API 的 `AGENTFORGE_DESKTOP_MANIFEST`。数组中每个条目对应一条 Supervisor 命令，例如：
+
+   ```json
+   [{"tenant":"local","space":"development","user":"developer","bot":"00000000-0000-4000-8000-000000000001","manifest":"/tmp/af-slot-a/desktop.json"}]
+   ```
+
+3. 使用对应账号在 Bot 的「电脑」面板启动桌面。重复启动沿用当前桌面。原版 oRPC 的 `computer.stop({ botId })` 会销毁容器和临时文件，并使这一代桌面的画面链接与控制授权失效。下次启动得到全新桌面。单个桌面最长运行四小时。若启用可见财经检索，仍给该工具配置对应名额的 manifest。
+4. 双账号验收时，在 A 的终端创建临时文件，再用 B 登录另一 Bot，检查其桌面没有该文件。让两个账号分别接管，停止 A 后验证 B 仍可输入，A 的旧链接不能连接。这一部署模式按配置分配名额，不跨主机调度。
+
+### 在原版 Files 面板中操作桌面文件
+
+启用上述按需桌面，重启使用新代码的 API 和对应 Supervisor，再启动该 Bot 的桌面。打开「电脑 → Files」，可列目录、预览 UTF-8 文本和图片、下载文件。点击接管后可上传或覆盖文件。只有当前持有键鼠控制权的浏览器登录会话可上传，交还控制权后仍可查看。文本预览上限为 2 MiB，单文件传输上限为 10 MiB，每个目录最多列出 1024 项。
+
+手工验收时，上传一份中文文本，再在桌面 xterm 中运行 `ls -l /workspace`，编辑后回到 Files 查看并下载。工作目录是该容器独有的 64 MiB 临时挂载，停止并重新启动桌面会清空它。聊天中已持久化的 CSV 仍从聊天附件下载。独立 Terminal 面板的交互式 Shell 尚待接入。

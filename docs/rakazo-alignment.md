@@ -1,6 +1,6 @@
 # 与 Rakazo 对齐的架构基线
 
-核查日期为 2026-11-03。比较对象为本地 Rakazo 原版 `d165de43` 与 AgentForge 迁移 `0014` 对应的实现。Rakazo 一侧按源码核对，AgentForge 一侧区分了本机联调、自动化回归和待验收能力。
+核查日期为 2026-11-04。比较对象为本地 Rakazo 原版 `d165de43` 与 AgentForge 迁移 `0015` 对应的实现。Rakazo 一侧按源码核对，AgentForge 一侧区分了本机联调、自动化回归和待验收能力。
 
 ## 本轮代码核查：对齐情况与实际差距
 
@@ -10,13 +10,15 @@
 | 运行与模型 | Graphile Worker 调度任务，Pi 负责 Agent 循环、上下文和工具 | Python Worker 使用数据库队列和租约，Python Harness 调用 Chat Completions。已联调 DeepSeek，支持版本快照、文本流和完整轮次裁剪。缺少 Pi 式语义压缩与独立业务 Task，RPC 的 taskId 为兼容标识。 |
 | Skill 与 MCP | 内置及用户 Skill、MCP 连接和工具管理 | 内置 Skill、HTTP Hub 安装、个人 Skill CRUD 和运行时按版本读取已接通。远程 MCP 工具需由部署方登记并限制作用域，原版广场管理和示教录制仍有缺口。 |
 | 审批与恢复 | ExternalEffect、审批卡片和回答后恢复执行 | Python Harness 保存工具参数与检查点，审批后恢复同一次操作。已确认结果可复用，已发出但结果未知的操作停止自动重发。通用外部业务写入仍待接入。 |
-| Computer | SandboxProvider 管理本地或远程环境的生命周期，提供桌面、终端和文件能力 | 数值计算在临时 Docker 容器中执行。交互桌面由部署者预分配并绑定租户、空间、用户和 Bot，原版面板可观看、接管和交还。按需创建、跨实例调度以及完整终端与文件接口仍待实现。 |
+| Docker 交付 | 生产 Compose 可选 Docker 沙箱覆盖配置，由 Supervisor 操作 Docker Engine | 原版 Web、FastAPI、Worker、Supervisor 分开运行，对接外部 PostgreSQL。API 与 Worker 没有 Docker socket。已验证单机 Colima 部署，目标 Ubuntu 环境待验收。 |
+| Computer 分配 | Team 按空间复用，Private 按 Bot 独占。常规 Run 在进入 Pi 前调用 provisionComputer | Team 按租户和空间复用，Private 按 Bot 分配。新 Bot 默认 Team，迁移 0015 将已有 Bot 保留为 Private。普通聊天无需启动桌面，点击启动时才分配或复用容器。 |
+| 桌面生命周期与文件 | 默认空闲阈值为十分钟，满足条件后保存工作区并挂起。提供终端及文件接口 | 可观看、接管和交还。Files 可列目录、预览、下载，持有控制权才可上传。Team 的 Files 默认进入各 Bot 目录，但桌面和终端共享。停止会清空临时文件，单次桌面最长四小时。独立 Terminal、停机文件浏览及工作区恢复待实现。 |
 | 浏览器 | 通用浏览器工具提供导航、观察和页面操作 | 财经新闻支持后台 RSS，也支持在可见 Chromium 中加载中新网财经列表、读取标题时间、滚动并点击原文。用户接管时 Agent 停止操作。可见流程仅开放指定站点和动作。 |
 | 产物与记忆 | 文件产物、版本和 MemoryProvider | 经审批的 CSV 可持久化，在聊天中显示文件卡片，并可由所有者下载。当前为单版本报告。通用上传、多版本管理、长期记忆与企业知识检索待实现。 |
 
 Rakazo 对照入口为 `apps/api/src/router.ts`、`apps/worker/src/index.ts` 和 `packages/adapters/src/` 下的 `pi-runtime.ts`、`approval-effect.ts`、`sandbox-factory.ts`、`browser-tools.ts`。AgentForge 对应入口包括 [oRPC 路由](../apps/api/agentforge_api/orpc.py)、[Python Harness](../packages/runtime/agentforge_runtime/chat_harness.py)、[桌面代理](../apps/api/agentforge_api/desktop.py)、[财经网页工具](../apps/supervisor/agentforge_supervisor/visible_news.py) 和 [文件产物存储](../packages/storage/agentforge_storage/artifacts.py)。
 
-本轮本机回归结果为 SQLite 557 项通过、5 项 PostgreSQL 专项跳过，独立 PostgreSQL 测试库 562 项全部通过。真实网页检索的验收路径是从原版聊天发起请求，在「电脑」查看模式观察浏览器加载并打开原文，最后核对聊天回复中的来源链接。运行所需的桌面分配、凭据和工具绑定见 [Supervisor 配置](../apps/supervisor/README.md)。
+**0015 验收范围。** 使用独立 PostgreSQL 通过全部 566 项回归；SQLite 通过 561 项，其余 5 项为 PostgreSQL 专项。真实 Compose 验收通过原版 Web 代理完成双账号密码登录、Team 接管互斥、按 Bot 访问文件、noVNC 页面访问、切换 Private、撤销旧屏幕链接及切回 Team。两个 AgentForge 镜像的本机验收架构为 `linux/arm64`。目标服务器的架构、外部数据库连接和 HTTPS 域名仍需现场验证。[镜像与交付步骤](../infra/delivery/README.md)
 
 ## 必须保持的边界
 
@@ -40,7 +42,7 @@ Rakazo 对照入口为 `apps/api/src/router.ts`、`apps/worker/src/index.ts` 和
 
 ## 后续验收顺序
 
-1. 补齐 Computer 生命周期。用两个身份同时申请桌面，验证分配、接管、撤权、停止、回收和重启恢复，再接原版 Terminal 与 Files 面板。
+1. 接通原版 Terminal 面板的 Shell 会话，核对接管、交还和撤权后断开，再验收跨实例调度与恢复。
 2. 将财经浏览流程扩展为受策略约束的通用浏览器工具。验证允许域名、导航、页面观察、点击和人工接管互斥，并覆盖上游超时与页面结构变化。
 3. 扩展产物版本与业务工具审批。验证重试不重复写入、不同所有者不可互读、旧版本可下载，再串联“检索 → 分析 → 报告 → 确认”。
 4. 接入企业身份、知识系统和实际 Skill 广场，再在目标 Ubuntu 服务器验收容器部署、监控及备份恢复。
@@ -86,3 +88,5 @@ threads.answer。支持允许本次／始终允许／拒绝、刷新恢复、重
 版本化 approval_tools 默认空，通过 REST Agent 配置启用，仍仅允许现有纯函数和受控只读 MCP。
 迁移 0013 尚未应用到开发库；API 和 Worker 需统一升级。放行规则提供 REST 查询与撤销，
 原版规则管理页、自动审核和外部写连接器尚未实现。详见 [审批说明](external-effects.md)。
+
+Docker 交付采用外部 PostgreSQL、独立 API / Worker 和持有 Docker socket 的 Supervisor。原版 Web 可通过 bots.setComputer 切换模式，范围与验证步骤见 [交付指南](../infra/delivery/README.md)。

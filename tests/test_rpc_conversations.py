@@ -331,7 +331,7 @@ def test_migration_preserves_old_rpc_thread_and_nonce(engine, client, headers, r
     from alembic import command
     from alembic.config import Config
 
-    bot = create_bot(client, headers)
+    bot = create_bot(client, headers, computerMode="dedicated")
     receipt = rpc(
         client,
         headers,

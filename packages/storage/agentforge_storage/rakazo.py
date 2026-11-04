@@ -263,6 +263,11 @@ class RakazoRepository:
                     scope, body["name"], config, _connection=conn
                 )
                 conn.execute(
+                    agents.update()
+                    .where(agents.c.agent_id == agent["agent_id"])
+                    .values(computer_mode=body.get("computerMode", "team"))
+                )
+                conn.execute(
                     rpc_bot_profiles.insert().values(
                         agent_id=agent["agent_id"],
                         **asdict(scope),
@@ -338,6 +343,32 @@ class RakazoRepository:
             )
         return self.bot(scope, bot_id)
 
+    def set_computer(self, scope, bot_id, mode):
+        with self.engine.begin() as conn:
+            self.policy.require(conn, scope, write=True)
+            agent_row(conn, scope, bot_id, authorization=self.policy, owner_only=True)
+            # Lock the bot row before checking for outstanding work and changing its binding.
+            current = conn.execute(
+                sa.select(agents.c.computer_mode)
+                .where(agents.c.agent_id == bot_id)
+                .with_for_update()
+            ).scalar_one()
+            if current != mode:
+                active = conn.execute(
+                    sa.select(runs.c.run_id)
+                    .where(
+                        runs.c.agent_id == bot_id,
+                        runs.c.status.in_(("queued", "running", "waiting_input")),
+                    )
+                    .limit(1)
+                ).first()
+                if active:
+                    raise RunConflict("Stop the bot first")
+                conn.execute(
+                    agents.update().where(agents.c.agent_id == bot_id).values(computer_mode=mode)
+                )
+        return self.bot(scope, bot_id)
+
     def bot(self, scope, bot_id):
         agent = self.conversations.get_agent(scope, bot_id)
         with self.engine.connect() as conn:
@@ -371,7 +402,7 @@ class RakazoRepository:
             "preview": "",
             "status": latest["status"] if latest else "idle",
             "runErrorId": latest["id"] if latest and latest["status"] == "failed" else None,
-            "computerMode": "team",
+            "computerMode": agent["computer_mode"],
             "updatedAt": iso(agent["created_at"]),
             "createdAt": iso(agent["created_at"]),
             "voiceId": None,

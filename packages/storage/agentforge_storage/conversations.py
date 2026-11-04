@@ -23,6 +23,7 @@ def agent_row(connection, scope, agent_id, version=None, *, authorization=None, 
         connection.execute(
             sa.select(
                 agents.c.agent_id,
+                agents.c.computer_mode,
                 agents.c.tenant_id,
                 agents.c.space_id,
                 agents.c.user_id,

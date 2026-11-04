@@ -1,7 +1,7 @@
 import sqlalchemy as sa
 
 metadata = sa.MetaData()
-SCHEMA_REVISION = "0014"
+SCHEMA_REVISION = "0015"
 
 agents = sa.Table(
     "agents",
@@ -10,6 +10,7 @@ agents = sa.Table(
     sa.Column("tenant_id", sa.String(128), nullable=False),
     sa.Column("space_id", sa.String(128), nullable=False),
     sa.Column("user_id", sa.String(128), nullable=False),
+    sa.Column("computer_mode", sa.String(12), nullable=False, server_default="dedicated"),
     sa.Column("version", sa.Integer, nullable=False),
     sa.Column("created_at", sa.Float, nullable=False),
     sa.Column("updated_at", sa.Float, nullable=False),

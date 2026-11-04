@@ -73,3 +73,109 @@ def test_desktop_control_and_revocation(repository, scope, tmp_path):
     path.write_text(json.dumps({**entry, "generation": "two"}))
     with pytest.raises(PermissionDenied):
         desktop.resolve(prior)
+
+
+def test_managed_desktops_isolate_accounts_and_invalidate_old_links(repository, scope, tmp_path):
+    from uuid import uuid4
+
+    from agentforge_api.desktop import DesktopDirectory
+    from agentforge_core.execution import ExecutionSnapshot
+    from agentforge_runtime.config import ModelSettings
+
+    other = replace(scope, user_id="other")
+    sessions = {"a": (scope, None), "b": (other, None)}
+
+    class Browser:
+        def resolve(self, cookie):
+            return sessions[cookie]
+
+    class TestSlot(Desktop):
+        entry = None
+
+        def exchange(self, action, generation, request):
+            assert generation == self.entry["generation"]
+            return {"result": {"ok": True}}
+
+        def lifecycle(self, action):
+            if action == "boot" and self.entry is None:
+                self.entry = dict(zip(("tenant", "space", "user", "bot"), self.owner, strict=True))
+                self.entry.update(generation=uuid4().hex, port=12345, view="r", control="w")
+            if action == "stop":
+                self.entry = None
+            return self.entry
+
+    directory = DesktopDirectory([])
+    conversations = ConversationRepository(repository.engine, repository.clock)
+    for user in (scope, other):
+        bot = conversations.create_agent(
+            user, "Private desktop", ExecutionSnapshot(model=ModelSettings().snapshot())
+        )["agent_id"]
+        directory.desktops.append(
+            TestSlot(
+                tmp_path / bot,
+                repository,
+                Browser(),
+                [user.tenant_id, user.space_id, user.user_id, bot],
+            )
+        )
+    a, b = directory.desktops
+    bot_a, bot_b = a.owner[-1], b.owner[-1]
+    assert directory.select(other, bot_a) is None
+    with pytest.raises(RunNotFound):
+        a.handle("boot", other, bot_a, "b")
+    with pytest.raises(PermissionDenied):
+        a.handle("boot", scope, bot_a, "b")
+    assert a.handle("status", scope, bot_a, "a")["state"] == "stopped"
+    for slot, user, bot, cookie in ((a, scope, bot_a, "a"), (b, other, bot_b, "b")):
+        assert slot.handle("boot", user, bot, cookie)["state"] == "running"
+        generation = slot.entry["generation"]
+        slot.handle("boot", user, bot, cookie)
+        assert slot.entry["generation"] == generation
+        assert slot.handle("takeover", user, bot, cookie)["leaseId"]
+    req = {"path": "mine.txt", "contentBase64": ""}
+    assert a.files("uploadFile", scope, bot_a, "a", req) == {"ok": True}
+    with pytest.raises(RunNotFound):
+        a.files("downloadFile", other, bot_a, "b", req)
+    sessions["another"] = (scope, None)
+    with pytest.raises(PermissionDenied):
+        a.files("uploadFile", scope, bot_a, "another", req)
+    url_a = urlsplit(a.handle("screenUrl", scope, bot_a, "a")["url"]).path
+    url_b = urlsplit(b.handle("screenUrl", other, bot_b, "b")["url"]).path
+    assert directory.resolve(url_a)["interactive"]
+    for _ in range(2):
+        assert a.handle("stop", scope, bot_a, "a")["state"] == "stopped"
+    a.handle("boot", scope, bot_a, "a")
+    with pytest.raises(PermissionDenied):
+        directory.resolve(url_a)
+    with pytest.raises(PermissionDenied):
+        a.files("uploadFile", scope, bot_a, "a", req)
+    assert directory.resolve(url_b)["interactive"]
+
+
+def test_workspace_access_and_atomic_uploads(tmp_path):
+    import base64
+    import os
+
+    from agentforge_supervisor.workspace_files import operate
+
+    root = tmp_path / "work"
+    root.mkdir()
+    (root / "资料").mkdir()
+    (root / "external").symlink_to(tmp_path)
+    os.mkfifo(root / "pipe")
+    name = "资料/报告.txt"
+    payload = base64.b64encode("中文".encode()).decode()
+    assert operate("uploadFile", {"path": name, "contentBase64": payload}, root) == {"ok": True}
+    assert operate("files", {"path": "/"}, root) == [{"path": "资料", "kind": "dir", "size": 0}]
+    assert operate("files", {"path": "资料"}, root)[0]["path"] == name
+    assert operate("readFile", {"path": name}, root)["content"] == "中文"
+    assert operate("downloadFile", {"path": name}, root)["contentBase64"] == payload
+    for path in ("../escape", "/etc/passwd", "external/work", "pipe"):
+        with pytest.raises((ValueError, OSError)):
+            operate("readFile", {"path": path}, root)
+    with pytest.raises((ValueError, OSError)):
+        operate("uploadFile", {"path": "external/leak", "contentBase64": payload}, root)
+    assert not (tmp_path / "leak").exists()
+    with pytest.raises(ValueError):
+        operate("uploadFile", {"path": name, "contentBase64": "invalid!"}, root)
+    assert (root / name).read_text() == "中文"

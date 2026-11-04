@@ -1,0 +1,92 @@
+name: agentforge
+
+x-backend: &backend
+  image: ${AGENTFORGE_BACKEND_IMAGE:?Set the AgentForge backend image}
+  env_file: .env.backend
+  environment:
+    AGENTFORGE_AUTH_MODE: database
+  init: true
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  volumes:
+    - ./config:/etc/agentforge:ro
+
+x-supervisor: &supervisor
+  image: ${AGENTFORGE_SUPERVISOR_IMAGE:?Set the Supervisor image}
+  user: "1000:1000"
+  group_add: ["${DOCKER_SOCKET_GID:?Set the host docker.sock GID}"]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  init: true
+  restart: unless-stopped
+
+services:
+  migrate:
+    <<: *backend
+    profiles: [maintenance]
+    command: [alembic, upgrade, head]
+
+  api:
+    <<: *backend
+    command: [uvicorn, "agentforge_api.app:create_app", --factory, --host, 0.0.0.0, --port, "8000"]
+    restart: unless-stopped
+    environment:
+      AGENTFORGE_AUTH_MODE: database
+      AGENTFORGE_DESKTOP_POOL: /slots/pool.sock
+      SCREEN_PROXY_SECRET: ${SCREEN_PROXY_SECRET:?Set a dedicated screen proxy secret}
+    volumes:
+      - ./config:/etc/agentforge:ro
+      - desktop_state:/slots:ro
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  worker:
+    <<: *backend
+    command: [agentforge-worker]
+    restart: unless-stopped
+    depends_on:
+      api: {condition: service_healthy}
+
+  web:
+    image: ${RAKAZO_WEB_IMAGE:?Set the original Rakazo application image}
+    command: [pnpm, --filter, '@rakazo/web', preview, --host, 0.0.0.0, --port, "5173"]
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      API_PROXY_TARGET: http://api:8000
+      RAKAZO_HOST: ${RAKAZO_HOST:?Set the public Web hostname}
+      SCREEN_PROXY_SECRET: ${SCREEN_PROXY_SECRET}
+    ports: ["127.0.0.1:${WEB_PORT:-5173}:5173"]
+    depends_on:
+      api: {condition: service_healthy}
+
+  supervisor:
+    <<: *supervisor
+    # The unmodified Web proxy resolves viewer targets on loopback.
+    network_mode: service:web
+    depends_on:
+      web: {condition: service_started, restart: true}
+    environment:
+      AGENTFORGE_COMPUTER_IMAGE: ${AGENTFORGE_COMPUTER_IMAGE:?Set the local Computer image ID}
+      AGENTFORGE_DESKTOP_LIMIT: ${AGENTFORGE_DESKTOP_LIMIT:-4}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - desktop_state:/slots
+
+  compute:
+    <<: *supervisor
+    profiles: [compute]
+    command: [uvicorn, 'agentforge_supervisor.app:create_app', --factory, --host, 0.0.0.0, --port, "8766"]
+    env_file:
+      - path: .env.compute
+        required: false
+    environment:
+      AGENTFORGE_COMPUTER_IMAGE: ${AGENTFORGE_COMPUTER_IMAGE}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  desktop_state:

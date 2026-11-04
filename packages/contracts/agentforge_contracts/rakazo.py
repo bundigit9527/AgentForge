@@ -22,6 +22,23 @@ class Target(RpcInput):
     botId: UUID
 
 
+class DesktopFile(Target):
+    model_config = ConfigDict(str_strip_whitespace=False)
+    path: str = Field(min_length=1, max_length=1024)
+
+
+class ListDesktopFiles(DesktopFile):
+    path: str = Field(default="/", max_length=1024)
+
+
+class UploadDesktopFile(DesktopFile):
+    contentBase64: str = Field(max_length=13_981_016)
+
+
+class SetComputer(Target):
+    mode: Literal["team", "dedicated"]
+
+
 class Bootstrap(RpcInput):
     botId: UUID | None = None
 
@@ -50,7 +67,7 @@ class CreateBot(RpcInput):
     instructions: str = Field(default="", max_length=10000)
     notifyOnFinish: bool = Field(default=False, strict=True)
     color: str | None = Field(default=None, max_length=200)
-    computerMode: Literal["team"] = "team"
+    computerMode: Literal["team", "dedicated"] = "team"
     spawnKey: str | None = Field(default=None, min_length=1, max_length=120)
 
 

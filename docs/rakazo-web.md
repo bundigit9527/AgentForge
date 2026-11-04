@@ -13,7 +13,7 @@ AGENTFORGE_AUTH_MODE=database
 AGENTFORGE_WEB_ORIGIN=http://127.0.0.1:5173
 ```
 
-在 AgentForge 目录升级数据库（当前最新 `0014`），并为已存在的成员设置 Web 登录：
+在 AgentForge 目录升级数据库（当前最新 `0015`），并为已存在的成员设置 Web 登录：
 
 ```bash
 uv run --env-file .env --locked alembic upgrade head
@@ -68,7 +68,7 @@ node --import "$AGENTFORGE_RAKAZO_ROOT/node_modules/tsx/dist/loader.mjs" tests/i
 ## 完整聊天手动验收
 
 1. 在 `.env` 配置模型，DeepSeek 官方示例见 [模型路由](model-routing.md)；API 与 Worker 使用相同配置。密钥只放本机 `AGENTFORGE_MODEL_API_KEY`。
-2. 按上文升级到 `0014`，以数据库身份模式启动 API、Worker 和原版 Web，使用管理员配置的邮箱密码登录。
+2. 按上文升级到 `0015`，以数据库身份模式启动 API、Worker 和原版 Web，使用管理员配置的邮箱密码登录。
 3. 原版模型设置可选 `deepseek-v4-pro`；Bot 设置的模型下拉框也应包含该项。旧模拟 Bot 必须改选真实模型（或保存默认模型），否则仍按旧配置运行。
 4. 第一轮发送：`请记住本次代号为星河。调用 example_report，把“今天完成模型接入”整理为报告草稿，再告诉我工具返回的内容。` 应看到工具执行事件与最终回复。
 5. 第二轮发送：`本次代号是什么？上一轮工具整理了什么？` 应能引用第一轮上下文；刷新页面后，两轮消息仍存在。

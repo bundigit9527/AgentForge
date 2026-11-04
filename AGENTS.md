@@ -128,3 +128,5 @@ waiting_input 保留 Thread 占用但释放 Worker 租约；审批回答与卡�
 始终允许规则按用户、空间、工具版本隔离，提供 REST 撤销；审批不扩展工具权限。
 目前只支持纯函数/受控只读 MCP；独立 Docker Computer 支持固定数值计算与 CSV 导出。迁移 0014 将报告与审批结果、附件事件原子保存，下载按 Run 所属用户和空间授权。外部写连接器、自动审核及通用脚本执行仍待接入。
 详情及手动验收见 docs/external-effects.md。原版 Rakazo 源码不变。
+
+Ubuntu 的单机 Compose 配置见 infra/delivery。迁移 0015 保留旧 Bot 的 Private 模式，新建 Bot 默认 Team。团队桌面只在同租户、同空间内共享，屏幕票据和控制租约必须绑定实际 Bot 和用户会话。API 当前须单进程运行。
