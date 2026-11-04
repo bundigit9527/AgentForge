@@ -71,6 +71,7 @@ services:
       web: {condition: service_started, restart: true}
     environment:
       AGENTFORGE_COMPUTER_IMAGE: ${AGENTFORGE_COMPUTER_IMAGE:?Set the local Computer image ID}
+      AGENTFORGE_TERMINAL_API_ORIGIN: http://api:8000
       AGENTFORGE_DESKTOP_LIMIT: ${AGENTFORGE_DESKTOP_LIMIT:-4}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

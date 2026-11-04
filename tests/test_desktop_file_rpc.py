@@ -80,7 +80,9 @@ def test_team_private_switch_and_control(settings, repository, people, tmp_path,
         key = tuple(self.owner)
         if action == "boot" and key not in running:
             entry = dict(zip(("tenant", "space", "user", "bot"), key, strict=True))
-            running[key] = dict(entry, generation=uuid4().hex, port=6012, view="v", control="c")
+            running[key] = dict(
+                entry, generation=uuid4().hex, port=6012, terminal_port=6100, view="v", control="c"
+            )
         if action == "stop":
             running.pop(key, None)
         return {"entry": running.get(key)}
@@ -112,8 +114,30 @@ def test_team_private_switch_and_control(settings, repository, people, tmp_path,
         assert call(alice, "computer.takeover", botId=a).is_success
         assert call(bob, "computer.takeover", botId=b).status_code == 409
         assert call(bob, "computer.stop", botId=b).status_code == 409
+        assert call(bob, "computer.terminalUrl", botId=b).status_code == 403
+        assert call(alice, "computer.commands", botId=a).json()["json"] == []
+        assert call(alice, "computer.status", botId=a).json()["json"]["terminalAvailable"]
+        term = call(alice, "computer.terminalUrl", botId=a).json()["json"]["url"]
+        key = term.split("/")[-2]
+        generation = next(iter(running.values()))["generation"]
+
+        def access(k, gen):
+            return alice.post("/api/internal/terminal-access", json={"key": k, "generation": gen})
+
+        assert access(key, generation).json() == {"workspaceBot": a}
+        assert access(key, "0" * 32).status_code == 403
+        screen = call(alice, "computer.screenUrl", botId=a).json()["json"]["url"]
+        assert access(screen.split("/")[-2], generation).status_code == 403
+        path = term.rsplit("/", 1)[0] + "/websockify"
+        route = alice.post(
+            "/api/internal/screen-target",
+            headers={"authorization": "Bearer " + "s" * 32},
+            json={"path": path},
+        ).json()
+        assert route["port"] == 6100 and route["path"] == f"/terminal/{key}"
         assert call(alice, "bots.setComputer", botId=a, mode="dedicated").status_code == 409
         assert call(alice, "computer.release", botId=a).is_success
+        assert access(key, generation).status_code == 403
         url = call(alice, "computer.screenUrl", botId=a).json()["json"]["url"]
 
         def target():

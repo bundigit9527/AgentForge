@@ -297,12 +297,18 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
                 "takeover",
                 "heartbeat",
                 "screenUrl",
+                "terminalUrl",
+                "commands",
             }:
                 model = ReleaseDesktop if action == "release" else Target
                 bot = str(model.model_validate(data).botId)
                 slot = desktop.select(scope, bot)
                 if slot is None:
                     raise RunNotFound()
+                if action == "commands":
+                    slot.authorize(scope, bot)
+                    # AgentForge currently emits no agent-initiated shell command events.
+                    return []
                 if action != "stop" or slot.owner:
                     return slot.handle(action, scope, bot, cookie)
         if procedure == "health":

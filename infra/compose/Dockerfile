@@ -9,7 +9,9 @@ COPY pyproject.toml uv.lock README.md LICENSE ./
 RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev --no-install-project
 COPY apps apps
 COPY packages packages
-RUN --mount=type=cache,target=/root/.cache/uv uv sync --locked --no-dev --no-editable
+# Application sources change independently of pyproject.toml and uv.lock.
+RUN --mount=type=cache,target=/root/.cache/uv uv cache clean agentforge-platform && \
+    uv sync --locked --no-dev --no-editable
 
 FROM ${PYTHON_IMAGE} AS backend
 WORKDIR /app

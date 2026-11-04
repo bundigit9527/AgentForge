@@ -23,6 +23,7 @@ dependencies = [
     "anyio>=4.15,<5",
     "httpx2>=2.16,<3",
     "jsonschema>=4.23,<5",
+    "websockets>=15,<17",
 ]
 
 [dependency-groups]

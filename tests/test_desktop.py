@@ -66,7 +66,17 @@ def test_desktop_control_and_revocation(repository, scope, tmp_path):
     call("takeover")
     with pytest.raises(PermissionDenied):
         desktop.resolve(control)
+    path.write_text(json.dumps({**entry, "terminal_port": 6789}))
+    term = call("terminalUrl")["url"].rsplit("/", 1)[0] + "/websockify"
+    assert desktop.resolve(term)["port"] == 6789
+    desktop.lease_end = 0
+    with pytest.raises(PermissionDenied):
+        desktop.resolve(term)
+    call("takeover")
+    term = call("terminalUrl")["url"].rsplit("/", 1)[0] + "/websockify"
     sessions.pop("first")
+    with pytest.raises(PermissionDenied):
+        desktop.resolve(term)
     with pytest.raises(PermissionDenied):
         desktop.resolve(view)
     prior = socket("second")
@@ -179,3 +189,22 @@ def test_workspace_access_and_atomic_uploads(tmp_path):
     with pytest.raises(ValueError):
         operate("uploadFile", {"path": name, "contentBase64": "invalid!"}, root)
     assert (root / name).read_text() == "中文"
+
+
+def test_terminal_stream_frames_split_and_coalesced():
+    import struct
+
+    from agentforge_supervisor.terminal_pty import frames
+
+    data = bytearray(b"\x00\x00")
+    assert list(frames(data)) == []
+    data.extend(b"\x00\x00\x02hi" + struct.pack(">BIHH", 1, 4, 120, 32))
+    assert list(frames(data)) == [(0, b"hi"), (1, struct.pack(">HH", 120, 32))]
+    assert not data
+    for invalid in (
+        struct.pack(">BI", 3, 0),
+        struct.pack(">BI", 1, 100),
+        struct.pack(">BI", 0, 65537),
+    ):
+        with pytest.raises(ValueError):
+            list(frames(bytearray(invalid)))

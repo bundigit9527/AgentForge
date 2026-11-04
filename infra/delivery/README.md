@@ -13,7 +13,7 @@ docker build -f infra/compose/Dockerfile --target supervisor -t agentforge/super
 
 若构建机连不上 Docker Hub，可给上面两条命令加上 `--build-arg PYTHON_IMAGE=public.ecr.aws/docker/library/python:3.12-slim-bookworm --build-arg CLI_IMAGE=public.ecr.aws/docker/library/docker:28-cli`。在目标架构的机器上构建，或用 Buildx 指定目标平台。
 
-在已核对版本的 Rakazo 仓库根目录构建原版 Web 和 Computer：
+Terminal 的前端验收基线是 Rakazo `d165de43`。请使用包含 `apps/web/src/components/computer/TerminalApp.tsx` 的对应版本构建 Web，并将 `RAKAZO_WEB_IMAGE` 指向该镜像。下面的命令在该 Rakazo 仓库根目录运行：
 
 ```sh
 docker build -f infra/compose/Dockerfile -t rakazo/web:local .
@@ -62,6 +62,6 @@ docker compose exec api agentforge-admin set-password --tenant local --space dev
 2. 交还控制权，在其中一个 Bot 的设置 → Advanced → Computer 选择 Private 并保存。新启动的 Private 桌面应独立，另一个 Bot 的 Team 桌面仍在运行。切换后旧屏幕链接失效。
 3. 停止 Private 桌面后切回 Team。进行中的 Run 和未释放的控制租约会阻止切换。停止会回收桌面和临时文件，切换不会迁移文件。
 4. Team 按租户和空间复用电脑。成员经自己有权操作的 Bot 使用共享屏幕；Files 面板默认定位到各 Bot 的工作目录。共用同一桌面的成员可通过终端访问该电脑里的其他文件，机密工作使用 Private。迁移前的 Bot 保留 Private，新建 Bot 默认 Team。
-5. 本版在手动启动电脑时分配容器，聊天仍运行在 Python Harness。沙箱单次最长运行四小时，不提供跨宿主机迁移。独立 Terminal 面板和 Rakazo 的空闲检查点策略尚待对齐。
+5. 本版在手动启动电脑时分配容器，聊天仍运行在 Python Harness。沙箱单次最长运行四小时，不提供跨宿主机迁移。独立 Terminal 支持交互式 Shell。接管后执行 `pwd; echo hello > terminal-test.txt`，在 Files 中预览该文件，再交还控制权验证连接断开。Rakazo 的空闲检查点策略仍待对齐。
 
-2026-11-04 在 Colima Linux 容器环境完成 Compose 验收，使用独立 PostgreSQL 和原版 Web 镜像 `ghcr.io/elie222/rakazo/app@sha256:ddafd94786b92193b62effdce6bbc03e19c38b44d383402ea88a81c3edb70ae7`。通过 Web 代理验证了双账号密码登录、共享电脑接管互斥、上传下载、noVNC 页面、Private 切换及旧链接撤销。目标 Ubuntu 服务器仍需用现场数据库、域名和目标架构镜像联调。
+2026-11-04 在 Colima Linux 容器环境完成 Compose 验收，使用独立 PostgreSQL 和原版 Web 镜像 `ghcr.io/elie222/rakazo/app@sha256:ddafd94786b92193b62effdce6bbc03e19c38b44d383402ea88a81c3edb70ae7`。该摘要记录的是上一版 Web 代理验收。通过 Web 代理验证了双账号密码登录、共享电脑接管互斥、上传下载、noVNC 页面、Private 切换及旧链接撤销。目标 Ubuntu 服务器仍需用现场数据库、域名和目标架构镜像联调。

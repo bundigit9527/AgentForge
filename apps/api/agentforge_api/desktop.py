@@ -15,7 +15,7 @@ from uuid import UUID, uuid4
 
 import sqlalchemy as sa
 from agentforge_core.desktop import slot_manifest
-from agentforge_core.identity import PermissionDenied
+from agentforge_core.identity import AuthenticationFailed, PermissionDenied
 from agentforge_core.models import RunConflict, RunNotFound, Scope
 from agentforge_storage.schema import agents, runs
 from fastapi import HTTPException, Request
@@ -38,6 +38,11 @@ class ReaderRequest(BaseModel):
     release: str | None = Field(default=None, max_length=64)
 
 
+class TerminalAccess(BaseModel):
+    key: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+    generation: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
 class TargetRequest(BaseModel):
     path: str = Field(max_length=4096)
 
@@ -51,6 +56,7 @@ class Ticket:
     policy: str
     lease: str | None
     expires: float
+    terminal: bool = False
 
 
 class DesktopFileInvalid(Exception):
@@ -167,6 +173,12 @@ class Desktop:
         generation = entry["generation"] if entry else None
         if generation != self.generation or self.lease_end <= time.time():
             self.controller = self.lease = None
+        elif self.controller:
+            try:
+                scope, _ = self.browser.resolve(self.controller)
+                self.authorize(scope, self.control_bot, True)
+            except (AuthenticationFailed, PermissionDenied, RunNotFound):
+                self.controller = self.lease = None
         if self.reader_end <= time.monotonic() or generation != self.generation:
             self.reader_id = None
         if generation != self.generation:
@@ -192,7 +204,7 @@ class Desktop:
             homeRevision=None,
             busyBotName=None,
             canUpdate=False,
-            terminalAvailable=False,
+            terminalAvailable=bool(entry and entry.get("terminal_port")),
         )
 
     def snapshot(self, scope, bot, cookie, snap):
@@ -272,7 +284,14 @@ class Desktop:
                     self.authorize(scope, bot, True)
                     self.lease_end = time.time() + 300
                 return {"ok": True}
-            if action != "screenUrl":
+            terminal = action == "terminalUrl"
+            if terminal:
+                if not self.controls(cookie, bot):
+                    raise PermissionDenied()
+                self.authorize(scope, bot, True)
+                if not entry.get("terminal_port"):
+                    return {"url": None}
+            elif action != "screenUrl":
                 raise ValueError("Unsupported desktop action")
             policy = "control" if self.controls(cookie, bot) else "view"
             lease = self.lease if policy == "control" else None
@@ -288,6 +307,7 @@ class Desktop:
                     for k, v in self.tickets.items()
                     if v.cookie == cookie
                     and v.bot == bot
+                    and v.terminal == terminal
                     and v.policy == policy
                     and v.lease == lease
                     and v.expires > now + 30
@@ -297,11 +317,36 @@ class Desktop:
             if key is None:
                 key = secrets.token_urlsafe(32)
                 self.tickets[key] = Ticket(
-                    cookie, scope, self.generation, bot, policy, lease, now + 3600
+                    cookie, scope, self.generation, bot, policy, lease, now + 3600, terminal
                 )
             prefix = f"/novnc/session/{policy}/{key}"
+            if terminal:
+                return {"url": f"{prefix}/terminal"}
             view_only = "false" if lease else "true"
             return {"url": f"{prefix}/embed.html?view_only={view_only}&path=websockify"}
+
+    def verify(self, key):
+        with self.lock:
+            entry = self.assignment()
+            self.sync(entry)
+            grant = self.tickets.get(key)
+            if not grant or grant.expires <= time.time():
+                raise PermissionDenied()
+            if (
+                not entry
+                or (not self.team and not self.assigned(entry, grant.scope, grant.bot))
+                or self.browser.resolve(grant.cookie)[0] != grant.scope
+            ):
+                raise PermissionDenied()
+            control = grant.policy == "control"
+            if control and (
+                not self.lease
+                or grant.lease != self.lease
+                or not self.controls(grant.cookie, grant.bot)
+            ):
+                raise PermissionDenied()
+            self.authorize(grant.scope, grant.bot, control)
+            return entry, grant
 
     def resolve(self, path):
         match = SCREEN_PATH.fullmatch(path)
@@ -311,25 +356,20 @@ class Desktop:
         if not ASSET_PATH.fullmatch(asset) or any(p in ("", ".", "..") for p in asset.split("/")):
             raise PermissionDenied()
         with self.lock:
-            entry = self.assignment()
-            self.sync(entry)
-            grant = self.tickets.get(key)
-            if not grant or grant.policy != policy or grant.expires <= time.time():
+            entry, grant = self.verify(key)
+            if grant.policy != policy:
                 raise PermissionDenied()
-            if (
-                not entry
-                or (not self.team and not self.assigned(entry, grant.scope, grant.bot))
-                or self.browser.resolve(grant.cookie)[0] != grant.scope
-            ):
-                raise PermissionDenied()
+            if grant.terminal:
+                if asset != "websockify" or not entry.get("terminal_port"):
+                    raise PermissionDenied()
+                return dict(
+                    protocol="http:",
+                    hostname="127.0.0.1",
+                    port=entry["terminal_port"],
+                    path=f"/terminal/{key}",
+                    interactive=True,
+                )
             control = policy == "control"
-            if control and (
-                not self.lease
-                or grant.lease != self.lease
-                or not self.controls(grant.cookie, grant.bot)
-            ):
-                raise PermissionDenied()
-            self.authorize(grant.scope, grant.bot, control)
             suffix = "?token=" + entry[policy] if asset == "websockify" else ""
             return dict(
                 protocol="http:",
@@ -489,6 +529,20 @@ def mount_desktop(app, store, browser):
                 desktop.reader_id = secrets.token_urlsafe(32)
                 desktop.reader_end = time.monotonic() + 45
                 return {"lease": desktop.reader_id}
+
+    @app.post("/api/internal/terminal-access", include_in_schema=False)
+    def terminal_access(body: TerminalAccess):
+        # The opaque terminal ticket is also presented by the relay before each input.
+        for slot in directory.all_desktops():
+            if body.key in slot.tickets:
+                try:
+                    entry, grant = slot.verify(body.key)
+                    if grant.terminal and entry["generation"] == body.generation:
+                        return {"workspaceBot": grant.bot if slot.team else None}
+                except (RunNotFound, RunConflict, PermissionDenied, AuthenticationFailed):
+                    pass
+                break
+        raise HTTPException(403)
 
     @app.post("/api/internal/screen-target", include_in_schema=False)
     def screen_target(body: TargetRequest, request: Request):

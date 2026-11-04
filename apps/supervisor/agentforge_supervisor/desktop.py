@@ -15,6 +15,8 @@ from pathlib import Path
 from urllib.request import ProxyHandler, build_opener
 from uuid import UUID, uuid4
 
+from agentforge_supervisor.terminal import terminal_relay
+
 PROGRAM = """
 set -eu
 export HOME=/tmp/home DISPLAY=:1
@@ -197,11 +199,13 @@ def running_desktop(args, bot, image, manifest, generation):
             view=view,
             control=control,
         )
-        temp = manifest.with_suffix(".tmp")
-        temp.write_text(json.dumps(entry))
-        temp.replace(manifest)
-        print(f"Desktop ready for bot {bot}", flush=True)
-        yield name
+        with terminal_relay(generation) as terminal_port:
+            entry["terminal_port"] = terminal_port
+            temp = manifest.with_suffix(".tmp")
+            temp.write_text(json.dumps(entry))
+            temp.replace(manifest)
+            print(f"Desktop ready for bot {bot}", flush=True)
+            yield name
     finally:
         manifest.unlink(missing_ok=True)
         subprocess.run(
