@@ -144,7 +144,7 @@ def test_registration_and_unsupported_account_operations_return_native_errors(na
     assert response.status_code == 403 and response.json()["code"] == "REGISTRATION_CLOSED"
     assert login(client).status_code == 200
     assert client.get("/api/auth/account-security").json()["hasPassword"] is True
-    response = client.post("/api/auth/change-password", headers={"Origin": ORIGIN}, json={})
+    response = client.post("/api/auth/delete-user", headers={"Origin": ORIGIN}, json={})
     assert response.status_code == 501 and response.json()["code"] == "NOT_IMPLEMENTED"
 
 
@@ -223,3 +223,75 @@ def test_account_security_checks_origin_and_disabled_auth_mode(native, settings,
     ) as disabled:
         disabled.cookies.set("agentforge_session", client.cookies["agentforge_session"])
         assert disabled.get("/api/auth/account-security").status_code == 401
+
+
+@pytest.mark.parametrize("revoke", [False, True])
+def test_change_password_rotates_requested_sessions(native, people, revoke):
+    client, passwords = native
+    other, _ = passwords.sign_in("alice@example.test", SECRET)
+    token = people[2]["alice"]["token"]
+    bridge, _ = passwords.browser.create(token)
+    assert login(client).is_success
+    old = client.cookies["agentforge_session"]
+    new = "abcdefgh"
+
+    def change(current, origin=ORIGIN):
+        return client.post(
+            "/api/auth/change-password",
+            headers={"Origin": origin},
+            json={"currentPassword": current, "newPassword": new, "revokeOtherSessions": revoke},
+        )
+
+    for invalid, code in [("short", "PASSWORD_TOO_SHORT"), ("🦊" * 65, "PASSWORD_TOO_LONG")]:
+        response = client.post(
+            "/api/auth/change-password",
+            headers={"Origin": ORIGIN},
+            json={"currentPassword": SECRET, "newPassword": invalid},
+        )
+        assert response.status_code == 400 and response.json()["code"] == code
+    assert change(SECRET, "https://other.example").status_code == 403
+    assert change("wrong").json()["code"] == "INVALID_PASSWORD"
+    passwords.browser.resolve(other)
+    passwords.browser.resolve(old)
+    result = change(SECRET)
+    assert result.is_success and result.json()["user"]["email"] == "alice@example.test"
+    current = client.cookies["agentforge_session"]
+    assert (current != old) == revoke
+    assert current not in result.text and new not in result.text
+    assert client.get("/api/auth/get-session").json()["user"]["id"] == "alice"
+    for session in (other, bridge, old):
+        if revoke:
+            with pytest.raises(AuthenticationFailed):
+                passwords.browser.resolve(session)
+        else:
+            passwords.browser.resolve(session)
+    assert people[0].authenticate(token) == people[1]["alice"]
+    assert login(client).status_code == 401
+    assert login(client, password=new).is_success
+
+
+def test_password_change_loses_to_operator_reset(native, people, monkeypatch):
+    import agentforge_storage.passwords as module
+
+    client, passwords = native
+    assert login(client).is_success
+    verify = module.matches
+
+    def concurrent_reset(password, encoded):
+        passwords.set_password(people[1]["alice"], "alice@example.test", SECRET + "-admin")
+        return verify(password, encoded)
+
+    monkeypatch.setattr(module, "matches", concurrent_reset)
+    result = client.post(
+        "/api/auth/change-password",
+        headers={"Origin": ORIGIN},
+        json={
+            "currentPassword": SECRET,
+            "newPassword": SECRET + "-loser",
+            "revokeOtherSessions": True,
+        },
+    )
+    assert result.status_code == 400
+    monkeypatch.setattr(module, "matches", verify)
+    assert login(client, password=SECRET + "-loser").status_code == 401
+    assert login(client, password=SECRET + "-admin").is_success

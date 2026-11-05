@@ -70,6 +70,7 @@ class Run:
     agent_version: int | None = None
     execution_config: ExecutionSnapshot | None = None
     context: tuple[ContextMessage, ...] = ()
+    input_files: tuple[dict, ...] = ()
 
 
 @dataclass(frozen=True)

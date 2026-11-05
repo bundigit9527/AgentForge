@@ -72,3 +72,59 @@ def test_unready_generation_does_not_overwrite_checkpoint(tmp_path, monkeypatch)
     pool.recover()
     assert (store / "scope.tar").read_bytes() == b"older"
     assert not path.with_suffix(".pool-generation").exists()
+
+
+def test_stopped_files_only_read_scoped_regular_members(tmp_path):
+    import io
+    import tarfile
+    from uuid import uuid4
+
+    from agentforge_supervisor.archived_files import browse
+
+    bot = str(uuid4())
+    archive = tmp_path / "scope.tar"
+
+    def read(action, path):
+        return browse(archive, action, {"path": path, "workspaceBot": bot})
+
+    assert read("files", "") == []
+    with tarfile.open(archive, "w") as tar:
+        for name in (f"./{bot}", f"./{bot}/notes"):
+            entry = tarfile.TarInfo(name)
+            entry.type = tarfile.DIRTYPE
+            tar.addfile(entry)
+        for prefix, text in [(bot, "first"), (str(uuid4()), "elsewhere")]:
+            data = text.encode()
+            entry = tarfile.TarInfo(f"./{prefix}/notes/file.txt")
+            entry.size = len(data)
+            tar.addfile(entry, io.BytesIO(data))
+        entry = tarfile.TarInfo(f"./{bot}/escape")
+        entry.type = tarfile.SYMTYPE
+        entry.linkname = "/etc/passwd"
+        tar.addfile(entry)
+    assert read("files", "/") == [{"kind": "dir", "path": "notes", "size": 0}]
+    assert read("readFile", "notes/file.txt")["content"] == "first"
+    for path in ("escape", "escape/passwd", "../other.txt"):
+        with pytest.raises(ValueError):
+            read("readFile", path)
+
+
+def test_failed_postfreeze_probe_cancels_idle_suspend(tmp_path, monkeypatch):
+    from agentforge_api.desktop import Desktop
+
+    slot = Desktop(tmp_path / "scope.json", None, None, ["t", "s", "u", "b"])
+    slot.generation = "a" * 32
+    slot.activity = 0
+    entry = {"generation": slot.generation}
+    monkeypatch.setattr(slot, "assignment", lambda: entry)
+    states = iter([False, True])
+    monkeypatch.setattr(slot, "has_active_run", lambda: next(states))
+    actions = []
+
+    def exchange(action, generation):
+        actions.append(action)
+        return {"ready": True}
+
+    monkeypatch.setattr(slot, "exchange", exchange)
+    slot.suspend_if_idle(1)
+    assert actions == ["prepareSuspend", "cancelSuspend"]

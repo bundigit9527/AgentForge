@@ -94,6 +94,10 @@ def project(connection, run, event_type, data):
         )
         if row:
             payload = message_view(row)
+            if role == "user" and run["input_files"]:
+                payload["blocks"] = (payload["blocks"] if row["content"] else []) + run[
+                    "input_files"
+                ]
             payload["messageId"] = payload.pop("id")
             payload["botId"] = run["agent_id"]
             append(connection, run, "thread.message.created", payload)

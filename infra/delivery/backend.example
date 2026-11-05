@@ -8,3 +8,6 @@ AGENTFORGE_MODEL_API_KEY=
 # AGENTFORGE_MODEL_API_STYLE=deepseek
 # AGENTFORGE_MCP_SERVERS_FILE=/etc/agentforge/mcp.json
 # AGENTFORGE_MCP_COMPUTER_TOKEN=
+
+# Enable original Web registration into isolated personal workspaces.
+AGENTFORGE_REGISTRATION_ENABLED=false

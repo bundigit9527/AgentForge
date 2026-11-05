@@ -14,13 +14,18 @@ MAX_TEXT = 2 * 1024 * 1024
 DIR = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 
 
-def operate(action, request, root="/workspace"):
-    path = request["path"]
+def path_parts(action, path):
     parts = [] if path in ("", "/") and action == "files" else path.split("/")
     if len(path) > 1024 or any(
         part in ("", ".", "..") or "\\" in part or not part.isprintable() for part in parts
     ):
         raise ValueError("Invalid workspace path")
+    return parts
+
+
+def operate(action, request, root="/workspace"):
+    path = request["path"]
+    parts = path_parts(action, path)
     with ExitStack() as resources:
         parent = os.open(root, DIR)
         resources.callback(os.close, parent)

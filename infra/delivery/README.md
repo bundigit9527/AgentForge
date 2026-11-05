@@ -45,7 +45,7 @@ docker compose up -d
 docker compose ps
 ```
 
-迁移命令显式升级到 0015。首次部署在 API 容器内创建管理员并设置密码，参数见 [身份指南](../../docs/identity.md)：
+迁移命令显式升级到 0016。首次部署在 API 容器内创建管理员并设置密码，参数见 [身份指南](../../docs/identity.md)：
 
 ```sh
 docker compose exec api agentforge-admin bootstrap --tenant local --tenant-name 公司 --space development --space-name 开发 --user admin --display-name 管理员
@@ -62,7 +62,7 @@ docker compose exec api agentforge-admin set-password --tenant local --space dev
 2. 交还控制权，在其中一个 Bot 的设置 → Advanced → Computer 选择 Private 并保存。新启动的 Private 桌面应独立，另一个 Bot 的 Team 桌面仍在运行。切换后旧屏幕链接失效。
 3. 停止 Private 桌面后切回 Team。进行中的 Run 和未释放的控制租约会阻止切换。正常停止会保存当前模式的 /workspace 并回收桌面容器。再次启动同一模式会恢复原文件；Team 与 Private 之间切换时，各自的文件留在原作用域。
 4. Team 按租户和空间复用电脑。成员经自己有权操作的 Bot 使用共享屏幕；Files 面板默认定位到各 Bot 的工作目录。共用同一桌面的成员可通过终端访问该电脑里的其他文件，机密工作使用 Private。迁移前的 Bot 保留 Private，新建 Bot 默认 Team。
-5. 本版在手动启动电脑时分配容器，聊天仍运行在 Python Harness。沙箱单次最长运行四小时，不提供跨宿主机迁移。独立 Terminal 支持交互式 Shell。接管后执行 `pwd; echo hello > terminal-test.txt`，在 Files 中预览该文件，再交还控制权验证连接断开。Rakazo 的空闲检查点策略仍待对齐。
+5. 本版在手动启动电脑时分配容器，聊天仍运行在 Python Harness。沙箱单次最长运行四小时，不提供跨宿主机迁移。独立 Terminal 支持交互式 Shell。接管后执行 `pwd; echo hello > terminal-test.txt`，在 Files 中预览该文件，再交还控制权验证连接断开。Compose API 默认在桌面空闲十分钟后发起挂起，可在 .env 设置 `AGENTFORGE_DESKTOP_IDLE_SECONDS`（0 表示关闭）。Team 使用同一活动窗口；控制租约、浏览器工具、活跃 Run 和相对启动时新增的容器进程都可推迟挂起。状态轮询、目录列表轮询及周期保存不刷新空闲计时。探测失败会延后重试。
 
 2026-11-04 在 Colima Linux 容器环境完成 Compose 验收，使用独立 PostgreSQL 和原版 Web 镜像 `ghcr.io/elie222/rakazo/app@sha256:ddafd94786b92193b62effdce6bbc03e19c38b44d383402ea88a81c3edb70ae7`。该摘要记录的是上一版 Web 代理验收。通过 Web 代理验证了双账号密码登录、共享电脑接管互斥、上传下载、noVNC 页面、Private 切换及旧链接撤销。目标 Ubuntu 服务器仍需用现场数据库、域名和目标架构镜像联调。
 
@@ -72,7 +72,7 @@ Compose 将名为 `workspace_checkpoints` 的持久卷挂到 Supervisor 的 `/ch
 
 - **正常停止**会先冻结桌面，通过只读辅助容器保存文件并原子替换旧归档，再移除桌面。保存失败时，停止请求返回冲突，桌面继续运行，可修复磁盘空间或权限后重试。
 - **Files 上传**在新内容成功归档后返回成功。Terminal 或桌面应用写入的文件在后台定期保存：通常从上一次保存后约 30 秒开始，多个桌面依次处理。突然断电、桌面容器丢失或四小时硬超时后，可恢复到最后一次成功归档，较新的未归档修改可能丢失。Supervisor 异常退出而桌面仍存活时，重启会先保存遗留桌面的工作区再回收容器。
-- **恢复范围**为 `/workspace`，包括 Team 各 Bot 的工作目录。浏览器登录态、Shell 进程、`/tmp` 和打开的窗口不随文件恢复。停机期间不能通过 Files 浏览归档。
+- **恢复范围**为 `/workspace`，包括 Team 各 Bot 的工作目录。浏览器登录态、Shell 进程、`/tmp` 和打开的窗口不随文件恢复。手动停止显示 stopped，空闲挂起显示 suspended。两种状态均可从原版 Files 查看最近一次成功归档的目录与 UTF-8 文本（上限 2 MiB）；链接条目不会被跟随，二进制传输与上传需要先启动桌面。
 - **运维**需要监控持久卷的可用空间，按需备份该卷。单次归档最多 128 MiB；单工作区的归档上限不会限制所有空间的总占用。`docker compose down` 保留检查点卷，`docker compose down -v` 会删除它。升级仍在运行的旧版时，请先导出旧临时桌面中的重要文件。
 
 验收时，在 Team 的 Terminal 中创建 `note.txt`，再在 Private 中创建内容不同的同名文件。分别停止、重启并检查文件内容。另建一个空间并启动它的 Team 桌面，确认原空间的工作目录不在其中。

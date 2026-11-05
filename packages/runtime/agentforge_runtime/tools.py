@@ -60,7 +60,7 @@ class ToolDefinition:
     input_model: type[BaseModel]
     output_model: type[BaseModel]
     handler: Callable[[BaseModel], dict]
-    effect: Literal["pure", "read", "write"] = "pure"
+    effect: Literal["pure", "read", "write", "artifact"] = "pure"
     render: Callable[[BaseModel], str] = lambda output: output.model_dump_json()
 
     @property
@@ -121,13 +121,14 @@ class ToolRegistry:
         for ref in references:
             definition = self._definitions.get(ref)
             # Reads need an additional grant from the runtime's scoped MCP adapter.
-            # Arbitrary reads and all writes stay disabled.
+            # The artifact renderer only publishes through the scoped run journal.
             if (
                 definition is None
                 or ref not in allowed
                 or not (
                     definition.effect == "pure"
                     or (definition.effect == "read" and ref in read_allowed)
+                    or (definition.effect == "artifact" and ref == "write_attachment@1")
                 )
             ):
                 raise RuntimeFailure(RunErrorCode.TOOL_NOT_ALLOWED)

@@ -1,4 +1,5 @@
-from contextlib import asynccontextmanager
+import os
+from contextlib import asynccontextmanager, nullcontext
 from typing import Annotated
 from uuid import UUID
 
@@ -154,8 +155,17 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app):
+        directory = getattr(_app.state, "desktop_directory", None)
+        seconds = (
+            int(os.environ.get("AGENTFORGE_DESKTOP_IDLE_SECONDS", "600"))
+            if directory and directory.pool
+            else 0
+        )
+        if seconds < 0:
+            raise ValueError("Desktop idle timeout must be nonnegative")
         try:
-            yield
+            with directory.idle_monitor(seconds) if directory else nullcontext():
+                yield
         finally:
             if owned_hub is not None:
                 owned_hub.close()
@@ -229,6 +239,7 @@ def create_app(
                     "external_effects",
                     "approval_requests",
                     "run_artifacts",
+                    "chat_artifacts",
                     "approval_grants",
                     "skill_installations",
                     "identity_tenants",

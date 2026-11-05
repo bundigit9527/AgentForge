@@ -33,6 +33,7 @@ services:
     environment:
       AGENTFORGE_AUTH_MODE: database
       AGENTFORGE_DESKTOP_POOL: /slots/pool.sock
+      AGENTFORGE_DESKTOP_IDLE_SECONDS: ${AGENTFORGE_DESKTOP_IDLE_SECONDS:-600}
       SCREEN_PROXY_SECRET: ${SCREEN_PROXY_SECRET:?Set a dedicated screen proxy secret}
     volumes:
       - ./config:/etc/agentforge:ro
@@ -45,7 +46,7 @@ services:
 
   worker:
     <<: *backend
-    command: [agentforge-worker]
+    command: [agentforge-worker, --watch]
     restart: unless-stopped
     depends_on:
       api: {condition: service_healthy}

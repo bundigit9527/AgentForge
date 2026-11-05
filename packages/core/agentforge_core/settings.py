@@ -11,6 +11,7 @@ class Settings:
     dev_token: str = field(default="", repr=False)
     auth_mode: str = "development"
     web_origin: str = ""
+    registration_enabled: bool = False
     dev_scope: Scope = Scope("local", "development", "developer")
 
     def __post_init__(self) -> None:
@@ -39,7 +40,11 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        registration = os.environ.get("AGENTFORGE_REGISTRATION_ENABLED", "false").lower()
+        if registration not in {"true", "false", "1", "0"}:
+            raise ValueError("AGENTFORGE_REGISTRATION_ENABLED must be true or false")
         return cls(
+            registration_enabled=registration in {"true", "1"},
             database_url=os.environ.get("AGENTFORGE_DATABASE_URL", ""),
             web_origin=os.environ.get("AGENTFORGE_WEB_ORIGIN", ""),
             auth_mode=os.environ.get("AGENTFORGE_AUTH_MODE", "development"),

@@ -13,7 +13,7 @@ AGENTFORGE_AUTH_MODE=database
 AGENTFORGE_WEB_ORIGIN=http://127.0.0.1:5173
 ```
 
-在 AgentForge 目录升级数据库（当前最新 `0015`），并为已存在的成员设置 Web 登录：
+在 AgentForge 目录升级数据库（当前最新 `0016`），并为已存在的成员设置 Web 登录：
 
 ```bash
 uv run --env-file .env --locked alembic upgrade head
@@ -38,7 +38,7 @@ NODE_ENV=development API_PROXY_TARGET=http://127.0.0.1:8000 WEB_PORT=5173 pnpm -
 - 原版清空按钮同时取消当前任务并清空消息，随后可继续发送；运行审计保留。
 - 不增加会话下拉框、版本提示或 AgentForge 专用登录页。后端扩展会话接口留给专门接入的客户端；外部切换后原版页面应重新加载。
 - 登录态到期或撤销遵守原版 Better Auth 刷新机制；没有额外的 AgentForge 定时检查器。
-- 注册、在线改密、找回密码、删除账户和企业登录尚未完成。管理人员通过 set-password 重设本地密码，原版页面操作收到真实错误。
+- 已登录用户可在原版账户设置中在线改密并使其他浏览器会话失效。可在 `.env` 设置 `AGENTFORGE_REGISTRATION_ENABLED=true`，重启 API 后使用原版注册页面，账号注册后自动登录并进入首次引导。新用户有独立个人空间；找回密码、删除账户和企业登录尚待接入。管理人员通过 set-password 重设本地密码，原版页面操作收到真实错误。
 
 ## 黑盒浏览器验证
 
@@ -68,7 +68,7 @@ node --import "$AGENTFORGE_RAKAZO_ROOT/node_modules/tsx/dist/loader.mjs" tests/i
 ## 完整聊天手动验收
 
 1. 在 `.env` 配置模型，DeepSeek 官方示例见 [模型路由](model-routing.md)；API 与 Worker 使用相同配置。密钥只放本机 `AGENTFORGE_MODEL_API_KEY`。
-2. 按上文升级到 `0015`，以数据库身份模式启动 API、Worker 和原版 Web，使用管理员配置的邮箱密码登录。
+2. 按上文升级到 `0016`，以数据库身份模式启动 API、Worker 和原版 Web，使用管理员配置的邮箱密码登录。
 3. 原版模型设置可选 `deepseek-v4-pro`；Bot 设置的模型下拉框也应包含该项。旧模拟 Bot 必须改选真实模型（或保存默认模型），否则仍按旧配置运行。
 4. 第一轮发送：`请记住本次代号为星河。调用 example_report，把“今天完成模型接入”整理为报告草稿，再告诉我工具返回的内容。` 应看到工具执行事件与最终回复。
 5. 第二轮发送：`本次代号是什么？上一轮工具整理了什么？` 应能引用第一轮上下文；刷新页面后，两轮消息仍存在。
@@ -89,3 +89,11 @@ node --import "$AGENTFORGE_RAKAZO_ROOT/node_modules/tsx/dist/loader.mjs" tests/i
 开发环境接通记录（2026-11-02）：本地 PostgreSQL 已由 0009 增量升级至 0011，原有账号、两个 Bot 与历史消息保留。现有模拟 Bot 已通过 bots.update 创建新的真实模型版本，账号默认模型为 deepseek-v4-pro；API 与 Worker 使用本地 .env，Rakazo Web 通过原版代理连接。Chrome 页面验证通过：邮箱登录、Bot 模型选择展示、真实两轮对话、工具回传、SSE 结果展示与刷新后历史保留；页面无脚本错误。验证后开发服务保持运行供手工测试，生产部署和完整 PostgreSQL 集成测试仍需另行验证。
 
 流式开发记录（2026-11-02）：原版前端源码未变，新增后端 model_text → thread.progress 映射、运行中刷新恢复与失败 / 取消清理。原版客户端 reducer 的显示与续传已离线验证，真实上游 SSE 已在独立临时环境验证。本轮没有重跑启用流式后的 Chrome 整页测试，也没有热切换现有开发服务：停止现有 API 的操作未获批准，因此当前页面继续使用之前已验证的非流式版本。
+
+## 聊天附件验收
+
+先显式升级数据库到 0016，启动同一版本的 API 和 Worker，选择 Chat Completions 模型。在原版 Bot 聊天框添加 CSV，输入“读取附件，计算合计并返回 result.txt”，核对返回文件的内容并刷新页面。也可只发附件。每轮最多四个文件，每个文件 1 字节至 10 MiB。
+
+- 原版 Web 先调用 `artifacts.create`，再由 `threads.send` 按顺序绑定已上传的文件 ID。发送重试复用原 Run，改变附件列表须使用新消息 nonce；上传可显式指定独立 nonce。
+- 输入文件保存在 PostgreSQL。模型看到文件清单，可通过 `read_attachment` 分页读取本轮附件。UTF-8 文本、Markdown、CSV、HTML 和 JSON 按文本回传，二进制文件与无法解码的片段按 base64 回传。PDF 提取、OCR、图像理解与 ZIP 解包需要独立解析工具。Files 面板继续管理桌面的 `/workspace`。
+- `write_attachment` 可将最多 3000 个字符的文本、Markdown、CSV 或 JSON 发布为本轮的可下载文件。附件卡片、工具完成和结果文件在同一事务内写入。聊天文件按租户、空间、用户和 Bot 限定访问范围；当前每次独立上传产生一个不可变文件，附带的文件引用固定在本轮。群组聊天及同名文件版本管理仍待对齐。

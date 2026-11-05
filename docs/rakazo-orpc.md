@@ -20,7 +20,7 @@
 | models.list / credentials / setDefault | 服务端模型目录、托管路由元数据与按用户保存的默认选择；Bot 可选择目录中的模型 |
 | 其余写操作 | 明确返回错误，不伪造成功 |
 
-普通 JSON 与文本消息已支持；附件、语音、Computer、长期记忆、人工审批、分组、独立 Task、前端模型凭据管理等尚未实现。原版入口保留，错误由原有组件处理；不注入统一错误浮层。Board 使用原版 `me.ticketBoardEnabled` 标记保留入口，业务接口仍返回未实现错误。
+已支持 Bot 文本与附件消息、受控桌面操作和人工审批。语音、长期记忆、分组、独立 Task 和前端模型凭据管理仍待接入。原版入口保留，错误由原有组件处理；不注入统一错误浮层。Board 使用原版 `me.ticketBoardEnabled` 标记保留入口，业务接口仍返回未实现错误。
 
 原版 Skill 浏览和聊天选择的字段映射、权限及版本限制见 [Skill 接入](skills.md#原版-rakazo-web-接入)。个人技能支持 create / update / remove，内置和 Hub 安装副本保持只读；录制示教的 `skills.*` 仍返回 501，Hub 安装复用现有 REST。
 
@@ -38,7 +38,7 @@
 
 `/api/auth/get-session`、`/api/auth/sign-out` 与原版 Better Auth 客户端兼容。会话通过 HttpOnly / SameSite=Strict Cookie 传递，HTTPS 时启用 Secure。会话最长 8 小时，逐请求复查成员与令牌授权，密码重设撤销已有密码会话。登录错误不泄露账号是否存在；账户锁定与入口限流见 [本地身份](identity.md)。
 
-公开注册返回 `REGISTRATION_CLOSED`；在线改密、密码找回、账号删除和 SSO 尚未实现，相关请求返回错误。原令牌登录桥 `/api/auth/agentforge` 为兼容工具保留，原版 Web 不调用它。REST 继续仅使用 Bearer；无效 Bearer 不回退 Cookie。
+设置 `AGENTFORGE_REGISTRATION_ENABLED=true` 后开放原版邮箱注册并创建独立个人空间，默认关闭返回 `REGISTRATION_CLOSED`。已支持在线改密；密码找回、账号删除和 SSO 尚未实现，相关请求返回错误。原令牌登录桥 `/api/auth/agentforge` 为兼容工具保留，原版 Web 不调用它。REST 继续仅使用 Bearer；无效 Bearer 不回退 Cookie。
 
 Cookie RPC 与登录写操作要求准确的 `AGENTFORGE_WEB_ORIGIN`；客户端空间选择只允许当前登录空间，不能授予权限。资源默认私有，空间共享不能共享会话选择或聊天历史。
 

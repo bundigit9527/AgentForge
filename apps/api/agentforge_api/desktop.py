@@ -2,12 +2,14 @@
 
 import hmac
 import json
+import logging
 import os
 import re
 import secrets
 import socket
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -79,6 +81,8 @@ class Desktop:
         self.generation = None
         self.reader_id = None
         self.reader_end = 0
+        self.offline_state = "stopped"
+        self.activity = time.monotonic()
 
     @property
     def team(self):
@@ -95,7 +99,11 @@ class Desktop:
     def exchange(self, action, *params):
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-                sock.settimeout(180 if action in ("boot", "stop", "uploadFile") else 35)
+                sock.settimeout(
+                    180
+                    if action in ("boot", "stop", "uploadFile", "prepareSuspend", "commitSuspend")
+                    else 35
+                )
                 sock.connect(str(self.pool or (str(self.manifest) + ".sock")))
                 sock.sendall(json.dumps([action, self.owner, *params]).encode() + b"\n")
                 with sock.makefile("rb") as reader:
@@ -113,6 +121,7 @@ class Desktop:
             reply = self.exchange(action)
             if reply.get("error") == "pool_full":
                 raise RunConflict("Desktop pool is full")
+            self.offline_state = reply.get("state", "stopped")
             entry = reply["entry"]
             if entry and [entry[k] for k in ("tenant", "space", "user", "bot")] != self.owner:
                 raise ValueError("Unexpected desktop owner")
@@ -130,16 +139,18 @@ class Desktop:
                 raise PermissionDenied()
             entry = self.assignment()
             self.sync(entry)
-            if not entry:
+            if not entry and not (self.pool and action in ("files", "readFile")):
                 raise RunConflict("Start the computer first")
             if writing and not self.controls(cookie, bot):
                 raise PermissionDenied()
             reply = self.exchange(
                 action,
-                entry["generation"],
+                entry["generation"] if entry else None,
                 {**request, "workspaceBot": bot} if self.team else request,
             )
             if "result" in reply:
+                if entry and action != "files":
+                    self.activity = time.monotonic()
                 return reply["result"]
             if reply.get("error") == "file_missing":
                 raise RunNotFound()
@@ -189,6 +200,7 @@ class Desktop:
         if generation != self.generation:
             self.tickets.clear()
             self.generation = generation
+            self.activity = time.monotonic()
 
     def status(self, entry, bot, cookie):
         self.sync(entry)
@@ -197,7 +209,7 @@ class Desktop:
             botId=bot,
             mode="team" if self.team else "dedicated",
             kind="docker",
-            state="running" if entry else "stopped",
+            state="running" if entry else self.offline_state,
             controlHolder="user"
             if controlled and self.controls(cookie, bot)
             else ("bot" if self.reader_id else "none"),
@@ -211,6 +223,49 @@ class Desktop:
             canUpdate=False,
             terminalAvailable=bool(entry and entry.get("terminal_port")),
         )
+
+    def has_active_run(self):
+        tenant, space, _, bot = self.owner
+        binding = agents.c.computer_mode == "team" if self.team else agents.c.agent_id == bot
+        with self.store.engine.connect() as conn:
+            return (
+                conn.execute(
+                    sa.select(runs.c.run_id)
+                    .join(agents, agents.c.agent_id == runs.c.agent_id)
+                    .where(
+                        agents.c.tenant_id == tenant,
+                        agents.c.space_id == space,
+                        binding,
+                        runs.c.status.in_(("queued", "running", "waiting_input")),
+                    )
+                    .limit(1)
+                ).first()
+                is not None
+            )
+
+    def suspend_if_idle(self, threshold):
+        with self.lock:
+            if time.monotonic() - self.activity < threshold:
+                return
+            entry = self.assignment()
+            self.sync(entry)
+            if not entry or time.monotonic() - self.activity < threshold:
+                return
+            self.activity = time.monotonic()
+            if self.controller or self.reader_id or self.has_active_run():
+                return
+            generation = entry["generation"]
+            if self.exchange("prepareSuspend", generation).get("ready"):
+                try:
+                    if not self.has_active_run() and self.exchange("commitSuspend", generation).get(
+                        "ready"
+                    ):
+                        self.offline_state = "suspended"
+                        self.sync(None)
+                        return
+                finally:
+                    if self.generation is not None:
+                        self.exchange("cancelSuspend", generation)
 
     def snapshot(self, scope, bot, cookie, snap):
         with self.lock:
@@ -239,21 +294,10 @@ class Desktop:
                         self.sync(self.assignment())
                         if self.controller or self.reader_id:
                             raise RunConflict("Release the computer first")
-                        with self.store.engine.connect() as conn:
-                            active = conn.execute(
-                                sa.select(runs.c.run_id)
-                                .join(agents, agents.c.agent_id == runs.c.agent_id)
-                                .where(
-                                    agents.c.tenant_id == scope.tenant_id,
-                                    agents.c.space_id == scope.space_id,
-                                    agents.c.computer_mode == "team",
-                                    runs.c.status.in_(("queued", "running", "waiting_input")),
-                                )
-                                .limit(1)
-                            ).first()
-                            if active:
-                                raise RunConflict("Stop the bot first")
+                        if self.has_active_run():
+                            raise RunConflict("Stop the bot first")
                     entry = self.lifecycle(action)
+                    self.activity = time.monotonic()
                     return self.status(entry, bot, cookie)
             entry = self.assignment()
             if self.owner and action == "status":
@@ -271,6 +315,7 @@ class Desktop:
                     raise RunConflict("财经检索正在使用浏览器，请在当前页面加载结束后接管")
                 if self.controller and not self.controls(cookie, bot):
                     raise RunConflict("Desktop is controlled by another login session")
+                self.activity = time.monotonic()
                 self.control_bot = bot
                 self.controller = cookie
                 self.lease = self.lease or str(uuid4())
@@ -282,6 +327,8 @@ class Desktop:
             if action == "release":
                 if self.controller and not self.controls(cookie, bot):
                     raise PermissionDenied()
+                if self.controller:
+                    self.activity = time.monotonic()
                 self.controller = self.lease = None
                 return {"ok": True}
             if action == "heartbeat":
@@ -437,14 +484,7 @@ class DesktopDirectory:
                 if mode == "team"
                 else (scope.tenant_id, scope.space_id, scope.user_id, bot)
             )
-            with self.lock:
-                if key not in self.dynamic:
-                    desktop = Desktop(
-                        slot_manifest(self.pool.parent, key), self.store, self.browser, list(key)
-                    )
-                    desktop.pool = self.pool
-                    self.dynamic[key] = desktop
-                return self.dynamic[key]
+            return self.pool_slot(key)
         for desktop in self.desktops:
             owner = desktop.owner
             if owner:
@@ -455,6 +495,44 @@ class DesktopDirectory:
             elif desktop.assigned(desktop.assignment(), scope, bot):
                 return desktop
         return None
+
+    def pool_slot(self, key):
+        with self.lock:
+            if key not in self.dynamic:
+                desktop = Desktop(
+                    slot_manifest(self.pool.parent, key), self.store, self.browser, list(key)
+                )
+                desktop.pool = self.pool
+                self.dynamic[key] = desktop
+            return self.dynamic[key]
+
+    @contextmanager
+    def idle_monitor(self, seconds):
+        if not self.pool or not seconds:
+            yield
+            return
+        stopped = threading.Event()
+
+        def monitor():
+            while not stopped.wait(min(5, seconds)):
+                for path in self.pool.parent.glob("*.json"):
+                    try:
+                        info = json.loads(path.read_text())
+                        key = tuple(info[k] for k in ("tenant", "space", "user", "bot"))
+                        if slot_manifest(self.pool.parent, key) == path:
+                            self.pool_slot(key).suspend_if_idle(seconds)
+                    except FileNotFoundError:
+                        continue
+                    except Exception:
+                        logging.exception("Idle suspension deferred for %s", path.stem)
+
+        thread = threading.Thread(target=monitor, name="desktop-idle", daemon=True)
+        thread.start()
+        try:
+            yield
+        finally:
+            stopped.set()
+            thread.join()
 
     def reader(self, generation):
         for desktop in self.all_desktops():
@@ -503,6 +581,7 @@ def mount_desktop(app, store, browser):
         desktops = [] if pool else [Desktop(manifest, store, browser)]
     directory = DesktopDirectory(desktops, Path(pool) if pool else None, store, browser)
 
+    app.state.desktop_directory = directory
     reader_secret = os.environ.get("AGENTFORGE_DESKTOP_READER_TOKEN", "")
     if reader_secret:
         if len(reader_secret) < 32 or reader_secret == secret:
@@ -523,6 +602,7 @@ def mount_desktop(app, store, browser):
                     if body.release != desktop.reader_id:
                         raise HTTPException(409)
                     desktop.reader_id = None
+                    desktop.activity = time.monotonic()
                     return {"ok": True}
                 desktop.authorize(
                     Scope(entry["tenant"], entry["space"], entry["user"]),

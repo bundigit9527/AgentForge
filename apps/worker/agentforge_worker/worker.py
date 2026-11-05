@@ -1,3 +1,4 @@
+import json
 import logging
 import math
 from contextlib import nullcontext
@@ -5,6 +6,11 @@ from threading import Event
 
 from agentforge_connectors.mcp import McpService
 from agentforge_core.models import RunErrorCode
+from agentforge_runtime.attachment_tools import (
+    READ_ATTACHMENT,
+    WRITE_ATTACHMENT,
+    with_attachment_tools,
+)
 from agentforge_runtime.chat_harness import configured_harness
 from agentforge_runtime.chat_model import RuntimeFailure
 from agentforge_runtime.config import ModelSettings
@@ -85,13 +91,32 @@ class Worker:
                     registry = with_skill_reader(registry, snapshot.skills)
                     runtime_tools = (*runtime_tools, SKILL_READ)
                     runtime_allowed = (*runtime_allowed, SKILL_READ)
+                prompt = claim.run.prompt
+                allowed_reads = mcp_refs
+                if claim.run.input_files and snapshot.model.provider == "chat_completions":
+                    registry = with_attachment_tools(
+                        registry,
+                        claim.run.input_files,
+                        lambda ref, offset: self.repository.read_attachment(claim, ref, offset),
+                    )
+                    runtime_tools = (*runtime_tools, READ_ATTACHMENT, WRITE_ATTACHMENT)
+                    runtime_allowed = (*runtime_allowed, READ_ATTACHMENT, WRITE_ATTACHMENT)
+                    allowed_reads = (*allowed_reads, READ_ATTACHMENT)
+                    prompt = json.dumps(
+                        {
+                            "request": prompt
+                            or "Describe the attached files based on what you can read.",
+                            "attachments": claim.run.input_files,
+                        },
+                        ensure_ascii=False,
+                    )
                 executor = ToolExecutor(
                     runtime_tools,
                     registry=registry,
                     allowed=runtime_allowed,
                     journal=RunToolJournal(self.repository, claim),
                     checkpoint=owns_execution,
-                    read_allowed=mcp_refs,
+                    read_allowed=allowed_reads,
                 )
                 if snapshot.approval_tools:
                     executor.approvals = ApprovalExecution(self.repository, claim)
@@ -107,7 +132,7 @@ class Worker:
                     if harness.model_config != snapshot.model:
                         raise RuntimeFailure(RunErrorCode.MODEL_CONFIGURATION_MISMATCH)
                     result = harness.execute(
-                        claim.run.prompt,
+                        prompt,
                         before_tool=lambda _name: owns_execution(),
                         checkpoint=lambda: (
                             not heartbeat.lost.is_set() and self.repository.owns_claim(claim)

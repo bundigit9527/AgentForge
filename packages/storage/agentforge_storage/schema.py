@@ -1,7 +1,7 @@
 import sqlalchemy as sa
 
 metadata = sa.MetaData()
-SCHEMA_REVISION = "0015"
+SCHEMA_REVISION = "0016"
 
 agents = sa.Table(
     "agents",
@@ -58,6 +58,7 @@ runs = sa.Table(
     sa.Column("agent_version", sa.Integer),
     sa.Column("execution_config", sa.JSON),
     sa.Column("context", sa.JSON),
+    sa.Column("input_files", sa.JSON, nullable=False, server_default="[]"),
     sa.Column("idempotency_key", sa.String(128)),
     sa.Column("status", sa.String(16), nullable=False),
     sa.Column("attempt", sa.Integer, nullable=False),
@@ -429,4 +430,27 @@ artifacts = sa.Table(
     sa.Column("data", sa.LargeBinary(512), nullable=False),
     sa.CheckConstraint("length(data) BETWEEN 1 AND 512", name="ck_run_artifacts_size"),
     sa.Column("created_at", sa.Float, nullable=False),
+)
+
+chat_artifacts = sa.Table(
+    "chat_artifacts",
+    metadata,
+    sa.Column("artifact_id", sa.String(36), primary_key=True),
+    sa.Column("tenant_id", sa.String(128), nullable=False),
+    sa.Column("space_id", sa.String(128), nullable=False),
+    sa.Column("user_id", sa.String(128), nullable=False),
+    sa.Column("agent_id", sa.String(36), sa.ForeignKey("agents.agent_id"), nullable=False),
+    sa.Column("run_id", sa.String(36), sa.ForeignKey("runs.run_id")),
+    sa.Column("nonce", sa.String(66)),
+    sa.Column("fingerprint", sa.String(64), nullable=False),
+    sa.Column("name", sa.String(255), nullable=False),
+    sa.Column("description", sa.String(280)),
+    sa.Column("mime_type", sa.String(128), nullable=False),
+    sa.Column("size", sa.Integer, nullable=False),
+    sa.Column("data", sa.LargeBinary, nullable=False),
+    sa.Column("created_at", sa.Float, nullable=False),
+    sa.UniqueConstraint("tenant_id", "space_id", "user_id", "nonce", name="uq_chat_artifact_nonce"),
+    sa.CheckConstraint(
+        "size BETWEEN 1 AND 10485760 AND length(data) = size", name="ck_chat_artifact_size"
+    ),
 )

@@ -1,7 +1,8 @@
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from agentforge_core.attachments import FILE_TYPES, filename
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
 
 class RpcInput(BaseModel):
@@ -54,10 +55,30 @@ class Subscribe(Target):
 
 
 class Send(Target):
-    text: str = Field(min_length=1, max_length=10000)
+    text: str = Field(default="", max_length=10000)
     clientNonce: str | None = Field(default=None, min_length=1, max_length=200)
-    artifactIds: list = Field(default_factory=list, max_length=0)
+    artifactIds: list[UUID] = Field(default_factory=list, max_length=4)
     mentions: list = Field(default_factory=list, max_length=0)
+
+    @model_validator(mode="after")
+    def has_message(self):
+        if not self.text and not self.artifactIds:
+            raise ValueError("Provide text or attachments")
+        return self
+
+
+class CreateArtifact(Target):
+    name: Annotated[str, Field(min_length=1, max_length=255), AfterValidator(filename)]
+    description: str | None = Field(default=None, max_length=280)
+    mimeType: str
+    contentBase64: str = Field(min_length=1, max_length=13_981_016)
+    clientNonce: str | None = Field(default=None, min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def known_type(self):
+        if self.mimeType not in FILE_TYPES:
+            raise ValueError("Unsupported attachment type")
+        return self
 
 
 class CreateBot(RpcInput):

@@ -1,7 +1,6 @@
 """Native Rakazo email/password protocol plus the existing local-token browser bridge."""
 
 import asyncio
-import json
 import secrets
 import time
 from collections import OrderedDict
@@ -13,8 +12,9 @@ from agentforge_core.identity import (
     AuthenticationUnavailable,
     PermissionDenied,
 )
+from agentforge_core.models import RunConflict
 from agentforge_storage.browser_sessions import BrowserSessions
-from agentforge_storage.passwords import PasswordLogin
+from agentforge_storage.passwords import InvalidCurrentPassword, PasswordLogin
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -31,6 +31,21 @@ class PasswordSignIn(BaseModel):
     password: str = Field(min_length=1, max_length=1024)
     rememberMe: bool = True
     callbackURL: str | None = Field(default=None, max_length=2048)
+
+
+class PasswordSignUp(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    email: str = Field(min_length=1, max_length=254)
+    password: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=128)
+    callbackURL: str | None = Field(default=None, max_length=2048)
+
+
+class PasswordChange(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    currentPassword: str = Field(min_length=1, max_length=1024)
+    newPassword: str
+    revokeOtherSessions: bool = False
 
 
 def auth_error(code, message, status):
@@ -158,12 +173,23 @@ location.assign('/app');}catch{error.textContent='暂时无法连接，请重试
 
     @app.post("/api/auth/sign-in/email")
     async def password_sign_in(request: Request):
+        return await handle_password_request(request, PasswordSignIn)
+
+    @app.post("/api/auth/change-password")
+    async def change_password(request: Request):
+        return await handle_password_request(request, PasswordChange)
+
+    async def handle_password_request(request, model):
         if settings.auth_mode != "database" or not origin:
             return auth_error("PASSWORD_AUTH_DISABLED", "Password login is unavailable", 503)
         try:
             check_origin(request)
         except PermissionDenied:
             return auth_error("INVALID_ORIGIN", "Invalid request origin", 403)
+        if model is PasswordSignUp and not settings.registration_enabled:
+            return auth_error(
+                "REGISTRATION_CLOSED", "Registration is closed; contact an administrator", 403
+            )
         now = time.monotonic()
         peer = request.client.host if request.client else "unknown"
         with peer_lock:
@@ -177,24 +203,35 @@ location.assign('/app');}catch{error.textContent='暂时无法连接，请重试
             return auth_error("TOO_MANY_REQUESTS", "Try again later", 429)
         try:
             if request.headers.get("content-type", "").split(";")[0].strip() != "application/json":
-                return auth_error("INVALID_REQUEST", "Invalid sign-in request", 400)
+                return auth_error("INVALID_REQUEST", "Invalid password request", 400)
             body = bytearray()
             try:
                 async with asyncio.timeout(10):
                     async for chunk in request.stream():
                         body.extend(chunk)
                         if len(body) > 8192:
-                            return auth_error("INVALID_REQUEST", "Invalid sign-in request", 400)
+                            return auth_error("INVALID_REQUEST", "Invalid password request", 400)
             except TimeoutError:
-                return auth_error("INVALID_REQUEST", "Invalid sign-in request", 400)
+                return auth_error("INVALID_REQUEST", "Invalid password request", 400)
             try:
-                data = PasswordSignIn.model_validate(json.loads(body))
+                data = model.model_validate_json(body)
             except (ValueError, ValidationError):
-                return auth_error("INVALID_REQUEST", "Invalid sign-in request", 400)
+                return auth_error("INVALID_REQUEST", "Invalid password request", 400)
+            if isinstance(data, PasswordChange):
+                return await apply_password_change(request, data)
             try:
-                raw, lifetime = await run_in_threadpool(
-                    passwords.sign_in, data.email, data.password
-                )
+                if isinstance(data, PasswordSignUp):
+                    raw, lifetime = await run_in_threadpool(
+                        passwords.register, data.email, data.password, data.name
+                    )
+                else:
+                    raw, lifetime = await run_in_threadpool(
+                        passwords.sign_in, data.email, data.password
+                    )
+            except ValueError:
+                return auth_error("INVALID_REQUEST", "Invalid registration request", 400)
+            except RunConflict:
+                return auth_error("USER_ALREADY_EXISTS", "Email is already registered", 422)
             except (AuthenticationFailed, PermissionDenied):
                 return auth_error("INVALID_EMAIL_OR_PASSWORD", "Invalid email or password", 401)
             old = request.cookies.get(COOKIE)
@@ -211,11 +248,48 @@ location.assign('/app');}catch{error.textContent='暂时无法连接，请重试
                 secure=origin.startswith("https://"),
                 samesite="strict",
                 path="/",
-                max_age=lifetime if data.rememberMe else None,
+                max_age=lifetime if getattr(data, "rememberMe", True) else None,
             )
             return response
         finally:
             password_slots.release()
+
+    async def apply_password_change(request, data):
+        try:
+            length = len(data.newPassword.encode("utf-16-le")) // 2
+        except UnicodeEncodeError:
+            return auth_error("INVALID_REQUEST", "Invalid password", 400)
+        if length < 8:
+            return auth_error("PASSWORD_TOO_SHORT", "Password is too short", 400)
+        if length > 128:
+            return auth_error("PASSWORD_TOO_LONG", "Password is too long", 400)
+        old = request.cookies.get(COOKIE)
+        try:
+            raw = await run_in_threadpool(
+                passwords.change_password,
+                old,
+                data.currentPassword,
+                data.newPassword,
+                data.revokeOtherSessions,
+            )
+            view = await run_in_threadpool(browser.session_view, raw)
+        except InvalidCurrentPassword:
+            return auth_error("INVALID_PASSWORD", "Invalid password", 400)
+        except (AuthenticationFailed, PermissionDenied):
+            return auth_error("UNAUTHORIZED", "Invalid session", 401)
+        response = JSONResponse(
+            {"token": None, "user": view["user"]}, headers={"Cache-Control": "no-store"}
+        )
+        if raw != old:
+            response.set_cookie(
+                COOKIE,
+                raw,
+                httponly=True,
+                secure=origin.startswith("https://"),
+                samesite="strict",
+                path="/",
+            )
+        return response
 
     @app.get("/api/auth/account-security")
     def account_security(request: Request):
@@ -252,11 +326,8 @@ location.assign('/app');}catch{error.textContent='暂时无法连接，请重试
         )
 
     @app.post("/api/auth/sign-up/email")
-    def sign_up(request: Request):
-        check_origin(request)
-        return auth_error(
-            "REGISTRATION_CLOSED", "Registration is closed; contact an administrator", 403
-        )
+    async def sign_up(request: Request):
+        return await handle_password_request(request, PasswordSignUp)
 
     @app.post("/api/auth/{operation:path}")
     def unsupported_auth(operation: str, request: Request):
@@ -282,7 +353,7 @@ location.assign('/app');}catch{error.textContent='暂时无法连接，请重试
             "chat": True,
             "browserLogin": bool(origin and settings.auth_mode == "database"),
             "computer": False,
-            "attachments": False,
+            "attachments": True,
             "memory": False,
             "approvals": False,
             "groups": False,

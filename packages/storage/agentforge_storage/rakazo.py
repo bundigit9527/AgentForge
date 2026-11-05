@@ -622,6 +622,7 @@ class RakazoRepository:
                 _connection=conn,
                 _latest_agent=True,
                 _resolve_config=resolve_config,
+                _artifact_ids=body.get("artifactIds", ()),
             )
             seq = conn.execute(
                 sa.select(thread_events.c.sequence)

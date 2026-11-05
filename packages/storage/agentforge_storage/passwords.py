@@ -12,8 +12,16 @@ from agentforge_core.models import RunConflict, Scope
 from sqlalchemy.exc import IntegrityError
 
 from agentforge_storage.browser_sessions import BrowserSessions, digest
-from agentforge_storage.identity import insert
-from agentforge_storage.schema import browser_sessions, identity_tokens, web_credentials
+from agentforge_storage.identity import insert, validate_label
+from agentforge_storage.schema import (
+    browser_sessions,
+    identity_memberships,
+    identity_spaces,
+    identity_tenants,
+    identity_tokens,
+    identity_users,
+    web_credentials,
+)
 
 
 def normalized_email(value):
@@ -48,6 +56,10 @@ def matches(password, encoded):
         return hmac.compare_digest(password_hash(password, bytes.fromhex(salt)), encoded)
     except (ValueError, TypeError):
         return False
+
+
+class InvalidCurrentPassword(Exception):
+    pass
 
 
 class PasswordLogin:
@@ -111,6 +123,71 @@ class PasswordLogin:
         except IntegrityError:
             raise RunConflict("Email is already assigned") from None
 
+    def register(self, email, password, name):
+        """Create an isolated personal workspace and session in one transaction.
+
+        The HTTP boundary must explicitly enable registration. No caller-supplied
+        scope or membership is accepted here, and existing accounts are never updated.
+        """
+        email = normalized_email(email)
+        name = name.strip()
+        validate_label(name)
+        if not 8 <= len(password.encode("utf-16-le")) // 2 <= 128:
+            raise ValueError("Password must contain 8–128 UTF-16 code units")
+        encoded = password_hash(password)
+        scope = Scope(str(uuid4()), str(uuid4()), str(uuid4()))
+        credential = str(uuid4())
+        now = self.clock()
+        try:
+            with self.engine.begin() as conn:
+                conn.execute(
+                    identity_tenants.insert().values(
+                        tenant_id=scope.tenant_id,
+                        name="Personal",
+                        active=True,
+                    )
+                )
+                conn.execute(
+                    identity_spaces.insert().values(
+                        tenant_id=scope.tenant_id,
+                        space_id=scope.space_id,
+                        name="Personal",
+                        active=True,
+                        revision=0,
+                    )
+                )
+                conn.execute(
+                    identity_users.insert().values(
+                        tenant_id=scope.tenant_id,
+                        user_id=scope.user_id,
+                        display_name=name,
+                        active=True,
+                    )
+                )
+                conn.execute(
+                    identity_memberships.insert().values(
+                        **asdict(scope),
+                        role="admin",
+                        active=True,
+                    )
+                )
+                conn.execute(
+                    web_credentials.insert().values(
+                        credential_id=credential,
+                        **asdict(scope),
+                        email=email,
+                        password_hash=encoded,
+                        revision=1,
+                        failed_attempts=0,
+                        locked_until=0,
+                        updated_at=now,
+                    )
+                )
+                raw = self._issue_session(conn, scope, credential, now, now + 28800)
+        except IntegrityError:
+            raise RunConflict("Email is already registered") from None
+        return raw, 28800
+
     def sign_in(self, email, password):
         try:
             email = normalized_email(email)
@@ -166,31 +243,93 @@ class PasswordLogin:
                     .where(web_credentials.c.credential_id == current["credential_id"])
                     .values(failed_attempts=0, locked_until=0)
                 )
-                # Reuse the existing session/token authorization and revocation path. The
-                # random API token is never returned and its plaintext is not persisted.
-                token_id = str(uuid4())
-                conn.execute(
-                    identity_tokens.insert().values(
-                        token_id=token_id,
-                        **asdict(scope),
-                        label="browser password session",
-                        token_hash=digest(secrets.token_urlsafe(48)),
-                        created_at=now,
-                        expires_at=now + 28800,
-                    )
-                )
-                raw = "afs_" + secrets.token_urlsafe(32)
-                conn.execute(
-                    browser_sessions.insert().values(
-                        session_id=str(uuid4()),
-                        session_hash=digest(raw),
-                        token_id=token_id,
-                        credential_id=current["credential_id"],
-                        created_at=now,
-                        expires_at=now + 28800,
-                    )
-                )
+                raw = self._issue_session(conn, scope, current["credential_id"], now, now + 28800)
                 result = raw, 28800
         if result is None:
             raise AuthenticationFailed()
         return result
+
+    def _issue_session(self, conn, scope, credential_id, now, expiry):
+        token_id = str(uuid4())
+        conn.execute(
+            identity_tokens.insert().values(
+                token_id=token_id,
+                **asdict(scope),
+                label="browser password session",
+                token_hash=digest(secrets.token_urlsafe(48)),
+                created_at=now,
+                expires_at=expiry,
+            )
+        )
+        raw = "afs_" + secrets.token_urlsafe(32)
+        conn.execute(
+            browser_sessions.insert().values(
+                session_id=str(uuid4()),
+                session_hash=digest(raw),
+                token_id=token_id,
+                credential_id=credential_id,
+                created_at=now,
+                expires_at=expiry,
+            )
+        )
+        return raw
+
+    def change_password(self, raw, current_password, new_password, revoke_others):
+        scope, _ = self.browser.resolve(raw)
+        credential = sa.select(web_credentials).where(
+            web_credentials.c.tenant_id == scope.tenant_id,
+            web_credentials.c.user_id == scope.user_id,
+        )
+        with self.engine.connect() as conn:
+            row = conn.execute(credential).mappings().first()
+        if not row or not matches(current_password, row["password_hash"]):
+            raise InvalidCurrentPassword()
+        encoded = password_hash(new_password)
+        with self.engine.begin() as conn:
+            now = self.clock()
+            changed = conn.execute(
+                web_credentials.update()
+                .where(
+                    web_credentials.c.credential_id == row["credential_id"],
+                    web_credentials.c.revision == row["revision"],
+                )
+                .values(
+                    password_hash=encoded,
+                    revision=row["revision"] + 1,
+                    updated_at=now,
+                    failed_attempts=0,
+                    locked_until=0,
+                )
+            )
+            if not changed.rowcount:
+                raise InvalidCurrentPassword()
+            # Recheck the calling session after the slow hash and under the credential lock.
+            scope, session = self.browser.resolve(raw, connection=conn)
+            if not revoke_others:
+                return raw
+            account_tokens = sa.select(identity_tokens.c.token_id).where(
+                identity_tokens.c.tenant_id == scope.tenant_id,
+                identity_tokens.c.user_id == scope.user_id,
+            )
+            conn.execute(
+                browser_sessions.update()
+                .where(
+                    browser_sessions.c.token_id.in_(account_tokens),
+                    browser_sessions.c.revoked_at.is_(None),
+                )
+                .values(revoked_at=now)
+            )
+            password_tokens = sa.select(browser_sessions.c.token_id).where(
+                browser_sessions.c.credential_id == row["credential_id"]
+            )
+            conn.execute(
+                identity_tokens.update()
+                .where(
+                    identity_tokens.c.token_id.in_(password_tokens),
+                    identity_tokens.c.revoked_at.is_(None),
+                )
+                .values(revoked_at=now)
+            )
+            return self._issue_session(
+                conn, scope, row["credential_id"], now, session["expires_at"]
+            )

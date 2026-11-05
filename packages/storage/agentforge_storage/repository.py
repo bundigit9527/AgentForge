@@ -12,6 +12,7 @@ from agentforge_core.models import (
     RunConflict,
     RunErrorCode,
     RunEvent,
+    RunNotFound,
     RunStatus,
     Scope,
 )
@@ -19,6 +20,7 @@ from agentforge_core.tools import ToolInvocation, ToolTicket
 from sqlalchemy.dialects.postgresql import insert as postgres_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
+from agentforge_storage.artifacts import ArtifactRepository, file_block, save_attachment_result
 from agentforge_storage.authorization import Authorization
 from agentforge_storage.conversations import agent_row, scoped, thread_row
 from agentforge_storage.schema import attempts, events, messages, runs, threads, tool_calls
@@ -52,6 +54,7 @@ def _run(row) -> Run:
             if row["execution_config"] is not None
             else None
         ),
+        input_files=tuple(row["input_files"] or []),
         context=tuple(ContextMessage.model_validate(item) for item in (row["context"] or [])),
     )
 
@@ -154,6 +157,7 @@ class RunRepository:
         execution_config: ExecutionSnapshot | None = None,
         _connection=None,
         _latest_agent=False,
+        _artifact_ids=(),
         _resolve_config: Callable[[sa.Connection, ExecutionSnapshot], ExecutionSnapshot]
         | None = None,
     ) -> Run:
@@ -161,7 +165,7 @@ class RunRepository:
             r"[A-Za-z0-9._:-]{1,128}", idempotency_key
         ):
             raise ValueError("Invalid idempotency key")
-        if not prompt.strip() or len(prompt) > 10000:
+        if (not prompt.strip() and not _artifact_ids) or len(prompt) > 10000:
             raise ValueError("Invalid prompt")
         now = self.clock()
         run_id = str(uuid4())
@@ -180,7 +184,11 @@ class RunRepository:
                 .mappings()
                 .first()
             )
-            if row is not None and (row["prompt"] != prompt or row["thread_id"] != thread_id):
+            if row is not None and (
+                row["prompt"] != prompt
+                or row["thread_id"] != thread_id
+                or tuple(f["artifactId"] for f in row["input_files"] or []) != tuple(_artifact_ids)
+            ):
                 raise RunConflict("Idempotency key was already used for another request")
             return row
 
@@ -258,7 +266,13 @@ class RunRepository:
                 self.authorization.require_dependencies(
                     connection, scope, config, thread["agent_id"] if thread else None
                 )
+                files = ArtifactRepository(self)
+                blocks = [
+                    file_block(files.row(connection, scope, ref, thread["agent_id"]))
+                    for ref in _artifact_ids
+                ]
                 statement = insert(runs).values(
+                    input_files=blocks,
                     run_id=run_id,
                     tenant_id=scope.tenant_id,
                     space_id=scope.space_id,
@@ -650,6 +664,21 @@ class RunRepository:
                 .all()
             )
 
+    def read_attachment(self, claim, ref, offset):
+        if ref not in {block["artifactId"] for block in claim.run.input_files}:
+            raise RunNotFound()
+        files = ArtifactRepository(self).query(claim.run.scope, claim.run.agent_id, content=True)
+        with self.engine.connect() as conn:
+            row = conn.execute(
+                sa.select(sa.func.substr(files.c.data, offset + 1, 2000), files.c.size).where(
+                    files.c.artifact_id == ref,
+                    sa.select(runs.c.run_id).where(self._owned(claim, self.clock())).exists(),
+                )
+            ).first()
+            if row is None:
+                raise RunNotFound()
+            return bytes(row[0]), row[1]
+
     def start_tool(self, claim: Claim, invocation: ToolInvocation) -> ToolTicket | None:
         now = self.clock()
         with self.engine.begin() as connection:
@@ -785,6 +814,8 @@ class RunRepository:
                 .mappings()
                 .one()
             )
+            if error_code is None and call["name"] == "write_attachment" and row["input_files"]:
+                save_attachment_result(connection, row, call["arguments"])
             _event(
                 connection,
                 row,

@@ -1,5 +1,6 @@
 import hashlib
 import secrets
+from contextlib import nullcontext
 from uuid import uuid4
 
 import sqlalchemy as sa
@@ -58,30 +59,29 @@ class BrowserSessions:
             )
         return raw, int(expiry - now)
 
-    def resolve(self, raw):
+    def resolve(self, raw, *, connection=None):
         if not raw or not raw.startswith("afs_") or len(raw) > 128:
             raise AuthenticationFailed()
-        with self.engine.connect() as conn:
-            row = (
-                conn.execute(
-                    sa.select(
-                        browser_sessions,
-                        identity_tokens.c.tenant_id,
-                        identity_tokens.c.space_id,
-                        identity_tokens.c.user_id,
-                    )
-                    .join(identity_tokens)
-                    .where(
-                        browser_sessions.c.session_hash == digest(raw),
-                        browser_sessions.c.revoked_at.is_(None),
-                        browser_sessions.c.expires_at > self.clock(),
-                        identity_tokens.c.revoked_at.is_(None),
-                        identity_tokens.c.expires_at > self.clock(),
-                    )
+        with nullcontext(connection) if connection is not None else self.engine.connect() as conn:
+            query = (
+                sa.select(
+                    browser_sessions,
+                    identity_tokens.c.tenant_id,
+                    identity_tokens.c.space_id,
+                    identity_tokens.c.user_id,
                 )
-                .mappings()
-                .first()
+                .join(identity_tokens)
+                .where(
+                    browser_sessions.c.session_hash == digest(raw),
+                    browser_sessions.c.revoked_at.is_(None),
+                    browser_sessions.c.expires_at > self.clock(),
+                    identity_tokens.c.revoked_at.is_(None),
+                    identity_tokens.c.expires_at > self.clock(),
+                )
             )
+            if connection is not None:
+                query = query.with_for_update()
+            row = conn.execute(query).mappings().first()
             if row is None:
                 raise AuthenticationFailed()
             scope = Scope(row["tenant_id"], row["space_id"], row["user_id"])

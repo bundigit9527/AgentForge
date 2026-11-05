@@ -12,6 +12,7 @@ from agentforge_contracts.rakazo import (
     Bootstrap,
     BotArtifact,
     ConversationList,
+    CreateArtifact,
     CreateBot,
     CreateConversation,
     CreateSkill,
@@ -422,6 +423,12 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
                 model.model_validate(data).model_dump(mode="json"),
                 create=procedure.endswith("/create"),
             )
+        if procedure == "artifacts/create":
+            body = CreateArtifact.model_validate(data)
+            try:
+                return artifacts.create(scope, body)
+            except ValueError:
+                raise RpcError(422, "UNPROCESSABLE_CONTENT", "Invalid attachment data") from None
         if procedure == "artifacts/list":
             return artifacts.listing(scope, str(Target.model_validate(data).botId))
         if procedure == "artifacts/listSpace":
@@ -529,7 +536,8 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
                         "Invalid conversation precondition",
                     ) from None
             data = await read_input(
-                request, 14_050_000 if procedure == "computer/uploadFile" else 128000
+                request,
+                14_050_000 if procedure in ("artifacts/create", "computer/uploadFile") else 128000,
             )
             if procedure == "threads/subscribe":
                 body = Subscribe.model_validate(data)
