@@ -129,13 +129,21 @@ class RelayConnection(socketserver.StreamRequestHandler):
 
 
 @contextmanager
-def running_desktop(args, bot, image, manifest, generation):
+def running_desktop(args, bot, image, manifest, generation, checkpoint=None):
     name = "agentforge-desktop-" + generation
     relay = LoopbackRelay(name)
     view, control = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
 
     threading.Thread(target=relay.serve_forever, daemon=True).start()
     try:
+        workspace = (
+            checkpoint.allocate()
+            if checkpoint
+            else (
+                "--tmpfs",
+                "/workspace:rw,nosuid,nodev,noexec,size=64m,mode=0700,uid=1000,gid=1000",
+            )
+        )
         docker(
             "run",
             "-d",
@@ -148,8 +156,7 @@ def running_desktop(args, bot, image, manifest, generation):
             "--read-only",
             "--tmpfs",
             "/tmp:rw,nosuid,nodev,size=256m,mode=1777",
-            "--tmpfs",
-            "/workspace:rw,nosuid,nodev,noexec,size=64m,mode=0700,uid=1000,gid=1000",
+            *workspace,
             "--user",
             "1000:1000",
             "--cap-drop=ALL",
@@ -168,6 +175,8 @@ def running_desktop(args, bot, image, manifest, generation):
             "-c",
             PROGRAM,
         )
+        if checkpoint:
+            checkpoint.restore()
         docker(
             "exec",
             "-i",

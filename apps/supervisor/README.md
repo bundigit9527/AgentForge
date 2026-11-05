@@ -98,6 +98,6 @@ uv run --locked uvicorn agentforge_supervisor.finance_news:create_app --factory 
 
 启用上述按需桌面，重启使用新代码的 API 和对应 Supervisor，再启动该 Bot 的桌面。打开「电脑 → Files」，可列目录、预览 UTF-8 文本和图片、下载文件。点击接管后可上传或覆盖文件。只有当前持有键鼠控制权的浏览器登录会话可上传，交还控制权后仍可查看。文本预览上限为 2 MiB，单文件传输上限为 10 MiB，每个目录最多列出 1024 项。
 
-手工验收时，上传一份中文文本，再在桌面 xterm 中运行 `ls -l /workspace`，编辑后回到 Files 查看并下载。工作目录是该容器独有的 64 MiB 临时挂载，停止并重新启动桌面会清空它。聊天中已持久化的 CSV 仍从聊天附件下载。打开独立 Terminal 面板并接管后，Private Shell 从 `/workspace` 启动，Team Shell 从 `/workspace/<botId>` 启动，可直接操作 Files 面板中的同一份文件。
+手工验收时，上传一份中文文本，再在桌面 xterm 中运行 `ls -l /workspace`，编辑后回到 Files 查看并下载。手工分配或名册模式使用临时工作区；单机 Compose 桌面池则会保存和恢复 /workspace，见 [工作区持久化说明](../../infra/delivery/README.md#桌面池的工作区保存与恢复)。聊天中已持久化的 CSV 仍从聊天附件下载。打开独立 Terminal 面板并接管后，Private Shell 从 `/workspace` 启动，Team Shell 从 `/workspace/<botId>` 启动，可直接操作 Files 面板中的同一份文件。
 
 交还控制权后，该连接后续输入会被拒绝，空闲连接也会轮询授权并关闭。退出登录、租约到期和停止桌面后需要重新接管才能打开新的 Shell。Shell 输入与窗口尺寸按原版二进制协议传递。Agent 工具命令历史当前为空。Supervisor 通过 `AGENTFORGE_TERMINAL_API_ORIGIN` 访问 API，默认值为 `http://127.0.0.1:8000`，单机 Compose 已配置内部地址。

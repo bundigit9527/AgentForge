@@ -95,11 +95,16 @@ class Desktop:
     def exchange(self, action, *params):
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-                sock.settimeout(90 if action == "boot" else 35)
+                sock.settimeout(180 if action in ("boot", "stop", "uploadFile") else 35)
                 sock.connect(str(self.pool or (str(self.manifest) + ".sock")))
                 sock.sendall(json.dumps([action, self.owner, *params]).encode() + b"\n")
                 with sock.makefile("rb") as reader:
-                    return json.loads(reader.readline(14_100_000 if params else 8192))
+                    reply = json.loads(reader.readline(14_100_000 if params else 8192))
+                    if reply.get("error") == "checkpoint_failed":
+                        raise RunConflict(
+                            "Workspace checkpoint failed; retry before stopping the desktop"
+                        )
+                    return reply
         except (OSError, ValueError) as exc:
             raise RunConflict("Desktop Supervisor unavailable") from exc
 

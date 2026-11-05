@@ -85,6 +85,7 @@ def failure(exc):
         "Stop the private computer first",
         "Stop the bot first",
         "Desktop pool is full",
+        "Workspace checkpoint failed; retry before stopping the desktop",
         "Team Computer requires a configured desktop pool",
         "Conversation request was already used",
         "Conversation request was already used with another title",

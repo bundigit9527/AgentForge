@@ -19,7 +19,7 @@ ENV PATH="/app/.venv/bin:$PATH" PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 COPY --from=build /app/.venv /app/.venv
 COPY alembic.ini ./
 COPY migrations migrations
-RUN useradd --uid 1000 --create-home agentforge && install -d -o 1000 -g 1000 -m 0700 /slots
+RUN useradd --uid 1000 --create-home agentforge && install -d -o 1000 -g 1000 -m 0700 /slots /checkpoints
 USER 1000:1000
 CMD ["uvicorn","agentforge_api.app:create_app","--factory","--host","0.0.0.0","--port","8000"]
 

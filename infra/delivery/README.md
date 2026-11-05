@@ -60,8 +60,19 @@ docker compose exec api agentforge-admin set-password --tenant local --space dev
 
 1. 在同一空间创建两个 Team Bot。分别启动电脑，两个面板应看到同一桌面。一个 Bot 接管时，另一个 Bot 的接管请求应返回冲突。
 2. 交还控制权，在其中一个 Bot 的设置 → Advanced → Computer 选择 Private 并保存。新启动的 Private 桌面应独立，另一个 Bot 的 Team 桌面仍在运行。切换后旧屏幕链接失效。
-3. 停止 Private 桌面后切回 Team。进行中的 Run 和未释放的控制租约会阻止切换。停止会回收桌面和临时文件，切换不会迁移文件。
+3. 停止 Private 桌面后切回 Team。进行中的 Run 和未释放的控制租约会阻止切换。正常停止会保存当前模式的 /workspace 并回收桌面容器。再次启动同一模式会恢复原文件；Team 与 Private 之间切换时，各自的文件留在原作用域。
 4. Team 按租户和空间复用电脑。成员经自己有权操作的 Bot 使用共享屏幕；Files 面板默认定位到各 Bot 的工作目录。共用同一桌面的成员可通过终端访问该电脑里的其他文件，机密工作使用 Private。迁移前的 Bot 保留 Private，新建 Bot 默认 Team。
 5. 本版在手动启动电脑时分配容器，聊天仍运行在 Python Harness。沙箱单次最长运行四小时，不提供跨宿主机迁移。独立 Terminal 支持交互式 Shell。接管后执行 `pwd; echo hello > terminal-test.txt`，在 Files 中预览该文件，再交还控制权验证连接断开。Rakazo 的空闲检查点策略仍待对齐。
 
 2026-11-04 在 Colima Linux 容器环境完成 Compose 验收，使用独立 PostgreSQL 和原版 Web 镜像 `ghcr.io/elie222/rakazo/app@sha256:ddafd94786b92193b62effdce6bbc03e19c38b44d383402ea88a81c3edb70ae7`。该摘要记录的是上一版 Web 代理验收。通过 Web 代理验证了双账号密码登录、共享电脑接管互斥、上传下载、noVNC 页面、Private 切换及旧链接撤销。目标 Ubuntu 服务器仍需用现场数据库、域名和目标架构镜像联调。
+
+## 桌面池的工作区保存与恢复
+
+Compose 将名为 `workspace_checkpoints` 的持久卷挂到 Supervisor 的 `/checkpoints`，仅 Supervisor 可读取归档。每个桌面运行时仍使用 64 MiB、nosuid/nodev/noexec 的内存工作区。归档键沿用桌面分配键，Team 按租户和空间保存，Private 还包含用户与 Bot。每个键仅保留最近一次完整归档。
+
+- **正常停止**会先冻结桌面，通过只读辅助容器保存文件并原子替换旧归档，再移除桌面。保存失败时，停止请求返回冲突，桌面继续运行，可修复磁盘空间或权限后重试。
+- **Files 上传**在新内容成功归档后返回成功。Terminal 或桌面应用写入的文件在后台定期保存：通常从上一次保存后约 30 秒开始，多个桌面依次处理。突然断电、桌面容器丢失或四小时硬超时后，可恢复到最后一次成功归档，较新的未归档修改可能丢失。Supervisor 异常退出而桌面仍存活时，重启会先保存遗留桌面的工作区再回收容器。
+- **恢复范围**为 `/workspace`，包括 Team 各 Bot 的工作目录。浏览器登录态、Shell 进程、`/tmp` 和打开的窗口不随文件恢复。停机期间不能通过 Files 浏览归档。
+- **运维**需要监控持久卷的可用空间，按需备份该卷。单次归档最多 128 MiB；单工作区的归档上限不会限制所有空间的总占用。`docker compose down` 保留检查点卷，`docker compose down -v` 会删除它。升级仍在运行的旧版时，请先导出旧临时桌面中的重要文件。
+
+验收时，在 Team 的 Terminal 中创建 `note.txt`，再在 Private 中创建内容不同的同名文件。分别停止、重启并检查文件内容。另建一个空间并启动它的 Team 桌面，确认原空间的工作目录不在其中。

@@ -2,11 +2,14 @@
 
 import fcntl
 import json
+import logging
 import os
 import re
 import signal
 import socketserver
+import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,34 +19,56 @@ from agentforge_core.desktop import slot_manifest
 
 from agentforge_supervisor.desktop import docker, running_desktop
 from agentforge_supervisor.desktop_slot import execute_workspace
+from agentforge_supervisor.workspace_checkpoint import CheckpointError, WorkspaceCheckpoint
 
 
 class DesktopPool:
-    def __init__(self, directory, image, capacity):
+    def __init__(self, directory, image, capacity, checkpoints):
         if not re.fullmatch(r"sha256:[a-f0-9]{64}", image) or capacity < 1:
             raise ValueError("Specify a local image ID and a positive desktop limit")
         self.directory = directory
         self.image = image
         self.capacity = capacity
         self.live = {}
+        self.checkpoints = Path(checkpoints)
+        self.checkpoints.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if self.checkpoints.stat().st_mode & 0o077 or self.checkpoints == self.directory:
+            raise ValueError("Choose a separate private workspace checkpoint directory")
+        self.last_save = {}
+        self.writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="workspace-save")
+        self.pending = None
 
     def remove(self, manifest):
+        self.finish_checkpoint(manifest)
         journal = manifest.with_suffix(".pool-generation")
-        if resources := self.live.pop(manifest, None):
-            resources.close()
         if journal.exists():
             generation = journal.read_text()
             if not re.fullmatch(r"[a-f0-9]{32}", generation):
                 raise ValueError("Invalid pool generation")
             name = "agentforge-desktop-" + generation
+            checkpoint = WorkspaceCheckpoint(self.checkpoints, manifest, generation, self.image)
+            if manifest.exists() and json.loads(manifest.read_text())["generation"] != generation:
+                raise RuntimeError("Workspace generation mismatch")
+            if manifest.exists() and docker("ps", "-q", "--filter", f"name=^/{name}$"):
+                checkpoint.save(stopping=True)
+            if resources := self.live.pop(manifest, None):
+                resources.close()
             if docker("ps", "-aq", "--filter", f"name=^/{name}$"):
                 docker("rm", "-f", name)
+            checkpoint.discard_runtime()
+            self.last_save.pop(manifest, None)
             manifest.unlink(missing_ok=True)
             journal.unlink()
 
     def recover(self):
+        errors = []
         for journal in self.directory.glob("*.pool-generation"):
-            self.remove(journal.with_suffix(".json"))
+            try:
+                self.remove(journal.with_suffix(".json"))
+            except Exception as exc:
+                errors.append(exc)
+        if errors:
+            raise ExceptionGroup("Could not recover all desktop slots", errors)
 
     def reap(self):
         if not self.live:
@@ -57,6 +82,33 @@ class DesktopPool:
             name = "agentforge-desktop-" + manifest.with_suffix(".pool-generation").read_text()
             if name not in names:
                 self.remove(manifest)
+
+    def save(self, path, generation):
+        WorkspaceCheckpoint(self.checkpoints, path, generation, self.image).save()
+        self.last_save[path] = time.monotonic()
+
+    def finish_checkpoint(self, path=None):
+        if self.pending is None:
+            return
+        active, future = self.pending
+        if path != active and not future.done():
+            return
+        try:
+            future.result()
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError):
+            logging.exception("Periodic checkpoint failed for %s", active.stem)
+        self.pending = None
+        self.last_save[active] = time.monotonic()
+
+    def periodic(self):
+        self.finish_checkpoint()
+        if self.pending or not self.last_save:
+            return
+        path = min(self.last_save, key=self.last_save.get)
+        if time.monotonic() - self.last_save[path] >= 30:
+            generation = path.with_suffix(".pool-generation").read_text()
+            checkpoint = WorkspaceCheckpoint(self.checkpoints, path, generation, self.image)
+            self.pending = path, self.writer.submit(checkpoint.save)
 
     def dispatch(self, message):
         action, owner, *params = message
@@ -78,11 +130,15 @@ class DesktopPool:
             args = SimpleNamespace(tenant=tenant, space=space, user=user)
             resources = ExitStack()
             try:
-                resources.enter_context(running_desktop(args, bot, self.image, path, generation))
+                checkpoint = WorkspaceCheckpoint(self.checkpoints, path, generation, self.image)
+                resources.enter_context(
+                    running_desktop(args, bot, self.image, path, generation, checkpoint)
+                )
             except BaseException:
                 self.remove(path)
                 raise
             self.live[path] = resources
+            self.last_save[path] = time.monotonic()
         if action == "stop":
             self.remove(path)
         entry = json.loads(path.read_text()) if path in self.live else None
@@ -95,7 +151,11 @@ class DesktopPool:
             return {"error": "desktop_changed"}
         if (not user) != ("workspaceBot" in request):
             raise ValueError("Wrong workspace scope")
-        return execute_workspace(action, request, generation)
+        self.finish_checkpoint(path)
+        result = execute_workspace(action, request, generation)
+        if action == "uploadFile" and result.get("result", {}).get("ok"):
+            self.save(path, generation)
+        return result
 
 
 def main():
@@ -107,6 +167,7 @@ def main():
         endpoint.parent,
         os.environ["AGENTFORGE_COMPUTER_IMAGE"],
         int(os.environ.get("AGENTFORGE_DESKTOP_LIMIT", "4")),
+        os.environ.get("AGENTFORGE_WORKSPACE_CHECKPOINTS", str(endpoint.parent / "checkpoints")),
     )
 
     class Handler(socketserver.StreamRequestHandler):
@@ -114,6 +175,9 @@ def main():
             self.connection.settimeout(10)
             try:
                 reply = pool.dispatch(json.loads(self.rfile.readline(14_100_000)))
+            except CheckpointError:
+                logging.exception("Could not save desktop workspace")
+                reply = {"error": "checkpoint_failed"}
             except Exception:
                 reply = {"error": "Desktop operation failed"}
             self.wfile.write(json.dumps(reply).encode() + b"\n")
@@ -125,6 +189,7 @@ def main():
             if time.monotonic() >= self.next_check:
                 self.next_check = time.monotonic() + 5
                 pool.reap()
+                pool.periodic()
 
     def stop(*_):
         raise SystemExit()
@@ -138,6 +203,7 @@ def main():
             with Server(str(endpoint), Handler) as server:
                 server.serve_forever()
         finally:
+            pool.writer.shutdown(wait=True)
             pool.recover()
             endpoint.unlink(missing_ok=True)
 

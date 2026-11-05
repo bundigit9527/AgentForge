@@ -65,17 +65,20 @@ services:
 
   supervisor:
     <<: *supervisor
+    stop_grace_period: 3m
     # The unmodified Web proxy resolves viewer targets on loopback.
     network_mode: service:web
     depends_on:
       web: {condition: service_started, restart: true}
     environment:
       AGENTFORGE_COMPUTER_IMAGE: ${AGENTFORGE_COMPUTER_IMAGE:?Set the local Computer image ID}
+      AGENTFORGE_WORKSPACE_CHECKPOINTS: /checkpoints
       AGENTFORGE_TERMINAL_API_ORIGIN: http://api:8000
       AGENTFORGE_DESKTOP_LIMIT: ${AGENTFORGE_DESKTOP_LIMIT:-4}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - desktop_state:/slots
+      - workspace_checkpoints:/checkpoints
 
   compute:
     <<: *supervisor
@@ -91,3 +94,4 @@ services:
 
 volumes:
   desktop_state:
+  workspace_checkpoints:
