@@ -1,5 +1,7 @@
 # AgentForge
 
+P0 本机验收与启动步骤见 [当前版本验收](docs/p0-acceptance.md)：原版 Web、真实模型、可见桌面、附件与 Activity 已完成整链路验证。
+
 Ubuntu 安装、镜像分发与 Team / Private 桌面验收见 [Docker 交付指南](infra/delivery/README.md)。
 
 **智构：基于 Python 的企业级智能体平台。**
@@ -19,6 +21,7 @@ AgentForge 致力于连接企业知识、业务工作流、Agent 和 Skill，让
 - [上下文管理](docs/context-management.md)：纯 Python Harness 的字符预算、完整历史轮次裁剪与调试。
 - [Agent 与会话](docs/conversations.md)：Agent 版本、消息、执行配置快照、尝试记录及手动调试。
 - [版本化工具](docs/tools.md)：工具注册、允许列表、输入输出验证、执行记录和调试。
+- [可见浏览器](docs/visible-browser.md)：Python 工具驱动所属 Computer 的 Chromium，访问公开 HTML、读取与点击链接。
 - [MCP 远程工具](docs/mcp.md)：只读工具发现、Agent 绑定、执行审计和本地演示。
 - [Skill 与广场安装](docs/skills.md)：内置技能、HTTP Hub、版本安装与按需读取。
 - [本地身份与权限](docs/identity.md)：空间成员、可撤销令牌、资源共享和双用户调试。

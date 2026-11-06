@@ -19,6 +19,7 @@ from uuid import UUID, uuid4
 from agentforge_core.desktop import slot_manifest
 
 from agentforge_supervisor.archived_files import browse
+from agentforge_supervisor.browser_pool import BrowserPool
 from agentforge_supervisor.desktop import docker, running_desktop
 from agentforge_supervisor.desktop_slot import execute_workspace
 from agentforge_supervisor.workspace_checkpoint import CheckpointError, WorkspaceCheckpoint
@@ -41,6 +42,7 @@ class DesktopPool:
         self.pending = None
         self.baselines = {}
         self.prepared = {}
+        self.browser = BrowserPool()
 
     def remove(self, manifest, *, saved=False):
         self.finish_checkpoint(manifest)
@@ -49,6 +51,7 @@ class DesktopPool:
             generation = journal.read_text()
             if not re.fullmatch(r"[a-f0-9]{32}", generation):
                 raise ValueError("Invalid pool generation")
+            self.browser.forget(generation)
             name = "agentforge-desktop-" + generation
             checkpoint = WorkspaceCheckpoint(self.checkpoints, manifest, generation, self.image)
             if manifest.exists() and json.loads(manifest.read_text())["generation"] != generation:
@@ -213,6 +216,12 @@ class DesktopPool:
             if entry and params == [entry["generation"]]:
                 return self.idle_action(path, entry["generation"], action)
             return {"ready": False}
+        if action == "browser":
+            generation, request = params
+            if not entry or generation != entry["generation"]:
+                return {"error": "desktop_changed"}
+            self.finish_checkpoint(path)
+            return self.browser.execute(generation, request)
         if action not in ("files", "readFile", "downloadFile", "uploadFile"):
             raise ValueError("Unknown desktop operation")
         generation, request = params

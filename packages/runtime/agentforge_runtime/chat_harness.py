@@ -3,6 +3,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
 import httpx
+from agentforge_core.browser import browser_tools
 from agentforge_core.execution import ContextMessage, ExecutionSnapshot, ModelConfig
 from agentforge_core.models import RunErrorCode
 
@@ -128,11 +129,33 @@ class ChatHarness(Harness):
                     invocation = prepared[index]
                     if not checkpoint() or not before_tool(invocation.definition.name):
                         raise ExecutionStopped()
-                    result = (
-                        approvals.execute(executor, invocation, f"step:{step}:call:{index}")
-                        if approvals
-                        else executor.execute(invocation)
-                    )
+                    try:
+                        result = (
+                            approvals.execute(executor, invocation, f"step:{step}:call:{index}")
+                            if approvals
+                            else executor.execute(invocation)
+                        )
+                    except RuntimeFailure as error:
+                        # The journal keeps this operation failed. A fresh observation is a
+                        # new tool call, not a replay or a successful result for the old one.
+                        if not (
+                            execution_config is not None
+                            and execution_config.browser_reading
+                            and invocation.definition.reference in browser_tools(True)
+                            and error.code == RunErrorCode.BROWSER_PAGE_CHANGED
+                        ):
+                            raise
+                        if not checkpoint():
+                            raise ExecutionStopped() from None
+                        result = json.dumps(
+                            {
+                                "error": error.code.value,
+                                "message": "The page snapshot is no longer current. "
+                                "This action did not succeed. Call browser_observe, then "
+                                "choose the next action using its current link IDs. If observe "
+                                "cannot recover the page, open the intended authorized URL again.",
+                            }
+                        )
                     window.current.append(
                         {
                             "role": "tool",

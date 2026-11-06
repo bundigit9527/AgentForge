@@ -11,3 +11,6 @@ AGENTFORGE_MODEL_API_KEY=
 
 # Enable original Web registration into isolated personal workspaces.
 AGENTFORGE_REGISTRATION_ENABLED=false
+
+# Optional public browser grants; see docs/visible-browser.md.
+# AGENTFORGE_BROWSER_POLICY_FILE=/etc/agentforge/browser.json

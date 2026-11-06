@@ -76,3 +76,7 @@ Compose 将名为 `workspace_checkpoints` 的持久卷挂到 Supervisor 的 `/ch
 - **运维**需要监控持久卷的可用空间，按需备份该卷。单次归档最多 128 MiB；单工作区的归档上限不会限制所有空间的总占用。`docker compose down` 保留检查点卷，`docker compose down -v` 会删除它。升级仍在运行的旧版时，请先导出旧临时桌面中的重要文件。
 
 验收时，在 Team 的 Terminal 中创建 `note.txt`，再在 Private 中创建内容不同的同名文件。分别停止、重启并检查文件内容。另建一个空间并启动它的 Team 桌面，确认原空间的工作目录不在其中。
+
+## 可选公开网页浏览器
+
+配置 `config/browser.json` 中的显式身份授权，在 `.env.backend` 设置 `AGENTFORGE_BROWSER_POLICY_FILE=/etc/agentforge/browser.json`，在 `.env` 单独生成并填写 `AGENTFORGE_BROWSER_TOKEN`。Compose 将该令牌和内部 API 地址传入 API、Worker、Supervisor，不传给 Web 或 Computer。配置和验收步骤见 [可见浏览器](../../docs/visible-browser.md)。功能默认关闭；启用后新建真实模型 Run 可自动启动所属电脑并打开公开 HTML 网页。原版 Rakazo Web 不需要改动。

@@ -5,6 +5,7 @@ import json
 import logging
 import time
 
+from agentforge_connectors.browser import BrowserPolicy
 from agentforge_contracts.rakazo import (
     AnswerApproval,
     ArtifactFamily,
@@ -20,6 +21,7 @@ from agentforge_contracts.rakazo import (
     Empty,
     History,
     ListDesktopFiles,
+    ListRuns,
     ListSpaceArtifacts,
     ReleaseDesktop,
     RemoveSkill,
@@ -52,6 +54,7 @@ from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 
+from agentforge_api.browser_execution import mount_browser_execution
 from agentforge_api.desktop import DesktopFileInvalid, mount_desktop
 from agentforge_api.rakazo_models import ModelRpcAdapter
 from agentforge_api.rakazo_skills import SkillRpcAdapter
@@ -219,11 +222,23 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
     from agentforge_api.browser_auth import COOKIE
 
     desktop = mount_desktop(app, store, browser)
+    mount_browser_execution(app, store, desktop)
     artifacts = ArtifactRepository(store)
     service = RakazoRepository(store)
     model_adapter = ModelRpcAdapter(store, model_configuration)
     app.state.rakazo = service
     skill_adapter = SkillRpcAdapter(skills, tool_allowlist)
+
+    def prepare_run(connection, scope, text, config):
+        config = skill_adapter.prepare_run(scope, text, config, connection=connection)
+        origins = (
+            BrowserPolicy.from_env().origins(scope)
+            if config.model.provider == "chat_completions"
+            else ()
+        )
+        return ExecutionSnapshot.model_validate(
+            {**config.model_dump(), "browser_origins": origins, "browser_reading": bool(origins)}
+        )
 
     def me(scope):
         user, _ = browser.profile(scope)
@@ -316,6 +331,9 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
         if procedure == "health":
             Empty.model_validate(data)
             return {"ok": True, "version": "agentforge-0.1.0"}
+        if procedure == "runs/list":
+            body = ListRuns.model_validate(data)
+            return {"runs": service.activity(scope, body.filter)}
         if procedure == "me":
             Empty.model_validate(data)
             return me(scope)
@@ -496,8 +514,8 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
                 scope,
                 body.model_dump(mode="json"),
                 expected_thread_id=expected_thread_id,
-                resolve_config=lambda connection, config: skill_adapter.prepare_run(
-                    scope, body.text, config, connection=connection
+                resolve_config=lambda connection, config: prepare_run(
+                    connection, scope, body.text, config
                 ),
             )
         # Empty collections accurately describe capabilities not present in this backend.

@@ -13,6 +13,7 @@ from agentforge_storage.conversations import ConversationRepository, agent_row, 
 from agentforge_storage.identity import insert
 from agentforge_storage.model_preferences import ModelPreferences
 from agentforge_storage.schema import (
+    agent_versions,
     agents,
     approval_requests,
     messages,
@@ -417,6 +418,75 @@ class RakazoRepository:
             "spawnKey": profile.get("spawnKey"),
         }
 
+    def activity(self, scope, filter):
+        """Native Activity only links to the currently selected, uncleared Bot thread.
+
+        Private run history must never inherit broader Run/Thread sharing grants.
+        """
+        statuses = (
+            ("queued", "running", "waiting_input")
+            if filter == "active"
+            else ("succeeded", "failed", "cancelled")
+        )
+        query = (
+            sa.select(runs, agent_versions.c.name.label("bot_name"), rpc_bot_profiles.c.profile)
+            .join(agents, agents.c.agent_id == runs.c.agent_id)
+            .join(
+                agent_versions,
+                sa.and_(
+                    agent_versions.c.agent_id == agents.c.agent_id,
+                    agent_versions.c.version == agents.c.version,
+                ),
+            )
+            .join(
+                rpc_thread_selections,
+                sa.and_(
+                    rpc_thread_selections.c.agent_id == runs.c.agent_id,
+                    rpc_thread_selections.c.thread_id == runs.c.thread_id,
+                    scoped(rpc_thread_selections, scope),
+                ),
+            )
+            .outerjoin(rpc_bot_profiles, rpc_bot_profiles.c.agent_id == agents.c.agent_id)
+            .where(
+                scoped(runs, scope),
+                self.policy.member_condition(scope),
+                self.policy.visible(agents, scope, "agent", "agent_id"),
+                runs.c.status.in_(statuses),
+                sa.select(messages.c.message_id)
+                .where(messages.c.run_id == runs.c.run_id, messages.c.role == "user")
+                .exists(),
+            )
+            .order_by(runs.c.updated_at.desc(), runs.c.run_id.desc())
+        )
+        if filter == "recent":
+            query = query.limit(20)
+        with self.engine.connect() as conn:
+            self.policy.require(conn, scope)
+            rows = conn.execute(query).mappings().all()
+        result = []
+        for row in rows:
+            snippet = " ".join(row["prompt"].split())
+            if not snippet and row["input_files"]:
+                snippet = " ".join(item.get("name", "Attachment") for item in row["input_files"])
+            if len(snippet) > 120:
+                snippet = snippet[:119] + "…"
+            result.append(
+                {
+                    "runId": row["run_id"],
+                    "botId": row["agent_id"],
+                    "botName": row["bot_name"],
+                    "groupId": None,
+                    "groupName": None,
+                    "threadId": row["thread_id"],
+                    "status": "completed" if row["status"] == "succeeded" else row["status"],
+                    "trigger": "user",
+                    "notificationsEnabled": (row["profile"] or {}).get("notifyOnFinish", False),
+                    "promptSnippet": snippet,
+                    "updatedAt": iso(row["updated_at"]),
+                }
+            )
+        return result
+
     def bots(self, scope):
         result, offset = [], 0
         while True:
@@ -501,7 +571,7 @@ class RakazoRepository:
 
     @staticmethod
     def _live_text(conn, tid, bot_id, row, cursor):
-        if not row or row["status"] != "running":
+        if not row or row["status"] not in {"running", "queued", "waiting_input"}:
             return []
         updates = (
             conn.execute(
@@ -523,16 +593,39 @@ class RakazoRepository:
         for event in updates:
             payload = event["payload"]
             text = payload["text"] if "text" in payload else text + payload.get("delta", "")
-        if not text:
+        activity = (
+            conn.execute(
+                sa.select(thread_events)
+                .where(
+                    thread_events.c.thread_id == tid,
+                    thread_events.c.run_id == row["run_id"],
+                    thread_events.c.event_type == "thread.message.updated",
+                    thread_events.c.payload["messageId"].as_string() == "progress:" + row["run_id"],
+                    thread_events.c.sequence <= cursor,
+                )
+                .order_by(thread_events.c.sequence.desc())
+                .limit(1)
+            )
+            .mappings()
+            .first()
+        )
+        blocks = (
+            [b for b in activity["payload"]["blocks"] if b["kind"] != "progress"]
+            if activity
+            else []
+        )
+        if text:
+            blocks.append({"kind": "progress", "text": text})
+        if not blocks:
             return []
-        latest = updates[-1]
+        latest = max([e for e in [activity, *updates[-1:]] if e], key=lambda e: e["sequence"])
         return [
             {
                 "id": "progress:" + row["run_id"],
                 "threadId": tid,
                 "seq": latest["sequence"],
                 "role": "bot",
-                "blocks": [{"kind": "progress", "text": text}],
+                "blocks": blocks,
                 "botId": bot_id,
                 "runId": row["run_id"],
                 "createdAt": iso(latest["created_at"]),

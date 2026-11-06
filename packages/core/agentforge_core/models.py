@@ -17,6 +17,11 @@ TERMINAL_STATUSES = {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED}
 
 
 class RunErrorCode(StrEnum):
+    BROWSER_NOT_ALLOWED = "browser_not_allowed"
+    BROWSER_UNAVAILABLE = "browser_unavailable"
+    BROWSER_BUSY = "browser_busy"
+    BROWSER_PAGE_CHANGED = "browser_page_changed"
+    BROWSER_FAILED = "browser_failed"
     EXECUTION_FAILED = "execution_failed"
     EFFECT_UNCERTAIN = "effect_uncertain"
     MCP_UNAVAILABLE = "mcp_unavailable"

@@ -5,6 +5,8 @@ x-backend: &backend
   env_file: .env.backend
   environment:
     AGENTFORGE_AUTH_MODE: database
+    AGENTFORGE_BROWSER_TOKEN: ${AGENTFORGE_BROWSER_TOKEN:-}
+    AGENTFORGE_BROWSER_API_ORIGIN: http://api:8000
   init: true
   security_opt: [no-new-privileges:true]
   cap_drop: [ALL]
@@ -32,6 +34,8 @@ services:
     restart: unless-stopped
     environment:
       AGENTFORGE_AUTH_MODE: database
+      AGENTFORGE_BROWSER_TOKEN: ${AGENTFORGE_BROWSER_TOKEN:-}
+      AGENTFORGE_BROWSER_API_ORIGIN: http://api:8000
       AGENTFORGE_DESKTOP_POOL: /slots/pool.sock
       AGENTFORGE_DESKTOP_IDLE_SECONDS: ${AGENTFORGE_DESKTOP_IDLE_SECONDS:-600}
       SCREEN_PROXY_SECRET: ${SCREEN_PROXY_SECRET:?Set a dedicated screen proxy secret}
@@ -75,6 +79,8 @@ services:
       AGENTFORGE_COMPUTER_IMAGE: ${AGENTFORGE_COMPUTER_IMAGE:?Set the local Computer image ID}
       AGENTFORGE_WORKSPACE_CHECKPOINTS: /checkpoints
       AGENTFORGE_TERMINAL_API_ORIGIN: http://api:8000
+      AGENTFORGE_BROWSER_TOKEN: ${AGENTFORGE_BROWSER_TOKEN:-}
+      AGENTFORGE_BROWSER_API_ORIGIN: http://api:8000
       AGENTFORGE_DESKTOP_LIMIT: ${AGENTFORGE_DESKTOP_LIMIT:-4}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

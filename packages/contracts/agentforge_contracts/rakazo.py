@@ -225,3 +225,7 @@ class ArtifactFamily(RpcInput):
 
 class ReleaseDesktop(Target):
     reason: Literal["done", "skipped"] | None = None
+
+
+class ListRuns(RpcInput):
+    filter: Literal["active", "recent"]

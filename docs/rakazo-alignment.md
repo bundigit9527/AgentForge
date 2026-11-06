@@ -1,6 +1,8 @@
 # 与 Rakazo 对齐的架构基线
 
-核查日期为 2026-11-04。比较对象为本地 Rakazo 原版 `d165de43` 与 AgentForge 迁移 `0016` 对应的实现。Rakazo 一侧按源码核对，AgentForge 一侧区分了本机联调、自动化回归和待验收能力。
+核查日期为 2026-11-06。比较对象为本地 Rakazo 原版 `d165de43` 与 AgentForge 迁移 `0016` 对应的实现。Rakazo 一侧按源码核对，AgentForge 一侧区分了本机联调、自动化回归和待验收能力。
+
+本次 P0 收口、真实 Web / 模型 / 桌面验收和配置说明见 [P0 记录](p0-acceptance.md)。当前通过 SQLite 638 项、PostgreSQL 643 项回归；这些结果不代表 Ubuntu 生产验收。
 
 ## 本轮代码核查：对齐情况与实际差距
 
@@ -13,7 +15,8 @@
 | Docker 交付 | 生产 Compose 可选 Docker 沙箱覆盖配置，由 Supervisor 操作 Docker Engine | 原版 Web、FastAPI、Worker、Supervisor 分开运行，对接外部 PostgreSQL。API 与 Worker 没有 Docker socket。已验证单机 Colima 部署，目标 Ubuntu 环境待验收。 |
 | Computer 分配 | Team 按空间复用，Private 按 Bot 独占。常规 Run 在进入 Pi 前调用 provisionComputer | Team 按租户和空间复用，Private 按 Bot 分配。新 Bot 默认 Team，迁移 0015 将已有 Bot 保留为 Private。普通聊天无需启动桌面，点击启动时才分配或复用容器。 |
 | 桌面生命周期与文件 | 默认空闲阈值为十分钟，满足条件后保存工作区并挂起。提供终端及文件接口 | 可观看、接管和交还。Files 可列目录、预览、下载，持有控制权才可上传。Team 的 Files 默认进入各 Bot 目录，但桌面和终端共享。Compose 桌面池在正常停止时归档 /workspace，启动时按原作用域恢复；单次桌面最长四小时。独立 Terminal 可在接管期间使用交互 Shell，与 Files 使用同一 Bot 目录。Compose 支持按空闲时间挂起，停机可列目录及预览文本；跨主机恢复仍待现场验收。 |
-| 浏览器 | 通用浏览器工具提供导航、观察和页面操作 | 财经新闻支持后台 RSS，也支持在可见 Chromium 中加载中新网财经列表、读取标题时间、滚动并点击原文。用户接管时 Agent 停止操作。可见流程仅开放指定站点和动作。 |
+| Activity 与执行记录 | 原版 runs.list、工具步骤及会话事件回放 | 已接通当前用户的活动列表和最近 20 条记录；成功工具保存次数与耗时，失败／中断明确提示，刷新可恢复。尚未实现独立业务 Task 和 Routine。 |
+| 浏览器 | 通用浏览器工具提供导航、观察和页面操作 | 新增 Python browser_open / browser_observe / browser_follow，按 Run 授权驱动所属 Computer 的可见 Chromium。支持公网 HTTPS 或指定来源的匿名 HTML 分段读取、查找、滚动和链接点击；无 JavaScript、表单输入与登录态复用，尚未达到 Rakazo 的完整浏览器能力。固定财经工具保留。 |
 | 产物与记忆 | 文件产物、版本和 MemoryProvider | 经审批的 CSV 可持久化，在聊天中显示文件卡片，并可由所有者下载。Bot 聊天支持上传、仅附件发送、本轮按授权读取及生成文本结果文件。每个文件目前为独立版本；同名文件版本管理、长期记忆与企业知识检索待实现。 |
 
 Rakazo 对照入口为 `apps/api/src/router.ts`、`apps/worker/src/index.ts` 和 `packages/adapters/src/` 下的 `pi-runtime.ts`、`approval-effect.ts`、`sandbox-factory.ts`、`browser-tools.ts`。AgentForge 对应入口包括 [oRPC 路由](../apps/api/agentforge_api/orpc.py)、[Python Harness](../packages/runtime/agentforge_runtime/chat_harness.py)、[桌面代理](../apps/api/agentforge_api/desktop.py)、[财经网页工具](../apps/supervisor/agentforge_supervisor/visible_news.py) 和 [文件产物存储](../packages/storage/agentforge_storage/artifacts.py)。
@@ -42,7 +45,7 @@ Rakazo 对照入口为 `apps/api/src/router.ts`、`apps/worker/src/index.ts` 和
 
 ## 后续验收顺序
 
-以 Rakazo 原版 `d165de43` 为功能基线，在 AgentForge 后端实现兼容，用原版 Web 与两名用户验收。当前起点为 `aee6043`。下表记录各阶段的交付与验收条件。
+以 Rakazo 原版 `d165de43` 为功能基线，在 AgentForge 后端实现兼容，用原版 Web 与两名用户验收。上一阶段交付为 `7af98bd`。下表记录各阶段的交付与验收条件。
 
 | 顺序 | 交付范围 | 发布验收 |
 | --- | --- | --- |
@@ -50,9 +53,10 @@ Rakazo 对照入口为 `apps/api/src/router.ts`、`apps/worker/src/index.ts` 和
 | 1b 已接通 | 为桌面池实现空闲挂起。默认阈值参考 Rakazo 的十分钟，复用工作区归档；按整台 Team 电脑判断活动，区分挂起与手动停止。 | 用短阈值验证空闲回收；有控制租约、执行中的任务或 Shell 后台作业时继续运行。保存失败可重试，唤醒后文件可读。 |
 | 1c 已接通 | 接通停机 Files 的目录与文本预览。Supervisor 读取最近一次完整归档并校验作用域和路径。 | 停机后列出并预览文件，运行容器数保持不变。覆盖 Team / Private 同名文件、跨空间访问和符号链接。 |
 | 2 已接通 | 打通原版聊天附件。核对 artifacts 与 threads.send 契约，贯通上传、仅附件发送、按 Run 授权读取及结果文件返回。 | 从原版聊天上传文件并发起任务；核对工具实际读到的内容、刷新后附件可用、跨用户引用被拒绝。 |
-| 3 | 扩展可见浏览器工具，从固定财经流程推进到授权网站的导航、观察、点击；配合原版 Activity 展示真实工具操作。 | 在两个授权站点完成同一项检索任务，用户能看到过程和来源；人工接管后 Agent 停止输入，失败时展示真实错误。 |
+| 3a 已接通 | 原版 runs.list Activity、工具执行中状态、完成步骤与耗时、失败／中断提示、刷新恢复。 | 核对两用户隔离、审批等待、取消、过期重试和 SSE 回放；不把未确认结果标为成功。 |
+| 3b 首版已接通 | 扩展可见浏览器工具，从固定财经流程推进到授权网站的导航、观察、点击；配合原版 Activity 展示真实工具操作。 | 首版验收公开站点的导航、读取与点击、来源返回、控制互斥和取消。新增长页面分段、页面内查找和滚动；复杂网站检索、登录、输入和业务提交继续作为后续目标。 |
 
-后续按原版产品域分批对齐。先做持久记忆及上下文压缩，再做独立 Task、Routine 和看板。邮箱注册已支持显式开关与独立个人空间；邮件验证、找回密码、删除账号与 OIDC 后续按原版部署配置分别验收。每项先确认原版页面入口、协议和权限语义，再排入开发。
+浏览器首版配置及已保留差异见 [可见浏览器](visible-browser.md)。后续补页面操作与外部副作用恢复，再按原版产品域推进持久记忆及上下文压缩，再做独立 Task、Routine 和看板。邮箱注册已支持显式开关与独立个人空间；邮件验证、找回密码、删除账号与 OIDC 后续按原版部署配置分别验收。每项先确认原版页面入口、协议和权限语义，再排入开发。
 
 Ubuntu 交付验证与上述功能并行，在目标架构上用实际域名和外部 PostgreSQL 验证 Compose、双账号隔离及数据库与工作区归档的配套恢复。
 

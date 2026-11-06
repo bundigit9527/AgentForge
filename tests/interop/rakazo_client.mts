@@ -151,9 +151,14 @@ const skillDetail = contracts.AgentSkillSchema.parse(await rpc.agentSkills.get({
 assert.equal((await rpc.agentSkills.get({name:selectedSkill.name})).id, selectedSkill.id);
 assert(skillDetail.content.startsWith('---\n'));
 const {serializeComposerPrompt} = await import(pathToFileURL(path.join(root, 'packages/core/src/composer-slash.ts')).href);
+const {reduceThreadSnapshot: reduceActivity} = await import(pathToFileURL(path.join(root,'apps/web/src/lib/thread-events.ts')).href);
+let foldedActivity = contracts.ThreadSnapshotSchema.parse(await rpc.threads.get({botId:bot.id}));
 const firstText = serializeComposerPrompt('第一轮', selectedSkill, []);
 const first = await rpc.threads.send({botId:bot.id, text:firstText, clientNonce:'interop-1'});
 assert.equal(typeof first.taskId, 'string');
+const activeActivity=contracts.RunsListOutputSchema.parse(await rpc.runs.list({filter:'active'}));
+assert.equal(activeActivity.runs[0].runId,first.runId);
+assert.equal(activeActivity.runs[0].status,'queued');
 assert.deepEqual(await rpc.threads.send({botId:bot.id, text:firstText, clientNonce:'interop-1'}), first);
 await exchange({type:'worker'});
 const savedRun = await (await transport(new Request(`http://testserver/api/v1/runs/${first.runId}`, {
@@ -166,6 +171,11 @@ assert.notEqual(first.runId, second.runId);
 await exchange({type:'worker'});
 const snapshot = contracts.ThreadSnapshotSchema.parse(await rpc.threads.get({botId:bot.id}));
 assert.equal(snapshot.messages.length, 4);
+const recentActivity=contracts.RunsListOutputSchema.parse(await rpc.runs.list({filter:'recent'}));
+assert.equal(recentActivity.runs.length,2);
+assert(recentActivity.runs.every((r:any)=>r.status==='completed'));
+assert.equal((await rpc.runs.list({filter:'active'})).runs.length,0);
+assert(snapshot.messages.some((m:any)=>m.blocks.some((b:any)=>b.kind==='steps')));
 assert.equal(snapshot.run?.status, 'completed');
 contracts.AppBootstrapSchema.parse(await rpc.bootstrap({botId:bot.id}));
 contracts.ThreadMessagePageSchema.parse(await rpc.threads.messages({botId:bot.id}));
@@ -175,10 +185,12 @@ for await (const value of events) {
   const event=contracts.ProductEventSchema.parse(value);
   assert(event.seq>cursor);
   cursor=event.seq;
+  foldedActivity=reduceActivity(foldedActivity,event);
   if(event.type==='run.completed') completed++;
 }
 assert.equal(completed, 2);
 assert.equal(cursor, snapshot.cursor);
+assert.deepEqual(foldedActivity.messages.map((m:any)=>({id:m.id,blocks:m.blocks})), snapshot.messages.map((m:any)=>({id:m.id,blocks:m.blocks})));
 await rpc.bots.update({botId:bot.id, instructions:'updated', memoryScope:null,
   autoSpeak:false, voiceId:null, modelProvider:null, modelId:null, thinkingLevel:null});
 const oldPage = await rpc.agentforge.conversations.list({botId:bot.id});

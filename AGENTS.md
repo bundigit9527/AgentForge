@@ -130,3 +130,11 @@ waiting_input 保留 Thread 占用但释放 Worker 租约；审批回答与卡�
 详情及手动验收见 docs/external-effects.md。原版 Rakazo 源码不变。
 
 Ubuntu 的单机 Compose 配置见 infra/delivery。迁移 0015 保留旧 Bot 的 Private 模式，新建 Bot 默认 Team。团队桌面只在同租户、同空间内共享，屏幕票据和控制租约必须绑定实际 Bot 和用户会话。API 当前须单进程运行。
+
+原版 runs.list 已接通当前用户所选 Bot 会话的 Activity，终态列表最多 20 条。清空会话后不展示原输入摘要，底层 Run 审计保留。工具 Activity 从同一 ToolJournal 事务投影；参数、结果和凭据不写入 UI 活动摘要。成功工具用 steps，失败／未确认用 meta；不能把 abandoned 状态投影为成功。详情见 docs/activity.md。
+
+可见浏览器首版见 docs/visible-browser.md。后端保持纯 Python，不引入 Graphile Worker / Node.js。Browser 工具只能由有效 Run / Attempt 调用，授权来源固定在运行快照并逐步复核当前部署策略；公网模式仅允许公开 HTTPS HTML，Supervisor 固定 DNS 解析地址并过滤凭据。Computer 仍无网络、无服务凭据。人工控制和 Agent 浏览器操作互斥，不伪造浏览器成功。
+
+长页面 read / scroll / find 通过 Run 快照 browser_reading 显式启用，旧快照默认 false。每次操作使用最新页面快照；正文／链接变化后要求重新 observe。正文位置按 Unicode 码点计算，单次输出仍受限，不把截断内容称为完整网页。
+
+P0 验收与统一本机启动见 docs/p0-acceptance.md；scripts/dev_service.py 按服务筛选环境，Web 不接收模型／数据库／MCP 凭据。本地 .local/ 保存电脑状态、授权与证据，禁止提交。真实模型验收脚本只使用一次性测试数据库和账号，必须在已有授权范围内运行。browser_page_changed 仅在 browser_reading 快照中作为可恢复工具错误回传模型，失败审计保留；授权拒绝、占用和轮次上限保持原行为。

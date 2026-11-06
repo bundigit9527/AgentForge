@@ -79,6 +79,7 @@ class Desktop:
         self.lease = None
         self.lease_end = 0
         self.generation = None
+        self.browser_entry = None
         self.reader_id = None
         self.reader_end = 0
         self.offline_state = "stopped"
@@ -159,6 +160,10 @@ class Desktop:
             raise RunConflict("Desktop workspace unavailable")
 
     def assignment(self):
+        # A browser operation reserves this generation. Keep screen authorization
+        # responsive while the serial Supervisor is serving that bounded operation.
+        if self.browser_entry and self.reader_id and self.reader_end > time.monotonic():
+            return self.browser_entry
         if self.owner:
             return self.lifecycle("status")
         try:
@@ -290,8 +295,11 @@ class Desktop:
                 if action in ("boot", "stop"):
                     if not cookie or self.browser.resolve(cookie)[0] != scope:
                         raise PermissionDenied()
-                    if action == "stop" and self.team:
+                    if action == "stop":
                         self.sync(self.assignment())
+                        if self.reader_id:
+                            raise RunConflict("Release the computer first")
+                    if action == "stop" and self.team:
                         if self.controller or self.reader_id:
                             raise RunConflict("Release the computer first")
                         if self.has_active_run():
@@ -312,7 +320,7 @@ class Desktop:
                 raise PermissionDenied()
             if action == "takeover":
                 if self.reader_id:
-                    raise RunConflict("财经检索正在使用浏览器，请在当前页面加载结束后接管")
+                    raise RunConflict("Agent 正在使用浏览器，请在当前操作结束后接管")
                 if self.controller and not self.controls(cookie, bot):
                     raise RunConflict("Desktop is controlled by another login session")
                 self.activity = time.monotonic()

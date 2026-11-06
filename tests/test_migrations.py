@@ -224,7 +224,9 @@ def test_rpc_migration_backfills_messages_and_preserves_execution(engine, scope,
         command.upgrade(config, "head")
     assert client.get("/health/ready").status_code == 200
     historical = service.history(scope, agent["agent_id"])["messages"]
-    assert [(m["id"], m["blocks"]) for m in original] == [
+    # Downgrading before the RPC event table deliberately removes its UI projection.
+    # The original upgrade backfills saved conversation text, not later tool-activity blocks.
+    assert [(m["id"], [b for b in m["blocks"] if b["kind"] == "text"]) for m in original] == [
         (m["id"], m["blocks"]) for m in historical
     ]
     assert repo.get(scope, first.run_id).status == "succeeded"

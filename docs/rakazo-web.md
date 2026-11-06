@@ -4,6 +4,8 @@
 
 原版 Computer 面板可查看和接管已分配的桌面，聊天与 Files 页面支持下载本次运行生成的 CSV。语音、Hub 管理页面、示教录制、模型凭据管理和 SSO 等入口仍保留，未接通的操作由后端返回错误。
 
+当前统一启动入口和 2026-11-06 的真实 PostgreSQL / DeepSeek / Computer 验收见 [P0 记录](p0-acceptance.md)。
+
 ## 本地启动
 
 AgentForge 配置继续使用原有 `.env`，例如：
@@ -80,7 +82,7 @@ node --import "$AGENTFORGE_RAKAZO_ROOT/node_modules/tsx/dist/loader.mjs" tests/i
 
 在 Rakazo 目录执行 `git diff d165de43 --exit-code`，确认受版本管理的内容与原版一致。相对本地定制提交仍可能显示恢复改动，这不代表源码仍有定制。原有 `.idea/`、环境配置和其他未跟踪个人文件不属于源码恢复范围，不提交它们。
 
-当前尚未执行 PostgreSQL 新迁移集成和生产部署验证；DeepSeek 真实模型验证见下面的本轮记录。
+以下为历史验证记录；当前结果以 [P0 验收](p0-acceptance.md) 为准，目标 Ubuntu 生产部署仍待验证。
 
 验证记录（2026-11-02）：后端 323 项通过、5 项 PostgreSQL 专用测试跳过；原版 Web 682 项单元测试与类型检查通过；黑盒 Chrome 完整流程通过，已检查原版登录和聊天截图。Ruff 检查通过。Rakazo 受版本管理文件与 `d165de43` 比较无差异，临时测试服务已停止。
 
@@ -97,3 +99,7 @@ node --import "$AGENTFORGE_RAKAZO_ROOT/node_modules/tsx/dist/loader.mjs" tests/i
 - 原版 Web 先调用 `artifacts.create`，再由 `threads.send` 按顺序绑定已上传的文件 ID。发送重试复用原 Run，改变附件列表须使用新消息 nonce；上传可显式指定独立 nonce。
 - 输入文件保存在 PostgreSQL。模型看到文件清单，可通过 `read_attachment` 分页读取本轮附件。UTF-8 文本、Markdown、CSV、HTML 和 JSON 按文本回传，二进制文件与无法解码的片段按 base64 回传。PDF 提取、OCR、图像理解与 ZIP 解包需要独立解析工具。Files 面板继续管理桌面的 `/workspace`。
 - `write_attachment` 可将最多 3000 个字符的文本、Markdown、CSV 或 JSON 发布为本轮的可下载文件。附件卡片、工具完成和结果文件在同一事务内写入。聊天文件按租户、空间、用户和 Bot 限定访问范围；当前每次独立上传产生一个不可变文件，附带的文件引用固定在本轮。群组聊天及同名文件版本管理仍待对齐。
+
+## Activity 手动验收
+
+打开原版侧栏铃铛 Activity，发送任务后可见排队／执行／等待审批；结束后进入最近记录。先在原版账户设置打开 Show tool activity，再展开回复中的工具记录，刷新后核对调用名称、次数及执行耗时。失败与被取消的未完成工具显示错误或结果未确认，不显示成功勾选。原版 Activity 最近记录为 20 条，搜索和日期过滤由原版页面处理。详细边界见 [执行记录](activity.md)。

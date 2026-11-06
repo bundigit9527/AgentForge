@@ -6,6 +6,7 @@
 
 | 调用 | 行为 |
 | --- | --- |
+| `runs.list` | 当前用户可打开的 Bot 会话中的运行中任务与最近 20 条终态任务 |
 | `health`、`me`、`bootstrap`、`spaces.list` | 当前授权身份、空间、导航及会话快照 |
 | `agentSkills.list/get` | 按权限查看内置、安装和个人技能目录，读取 SKILL.md |
 | `agentSkills.create/update/remove` | 原版个人技能维护；固定资产 ID、不可变版本、删除保留历史 |
@@ -56,7 +57,7 @@ POST `/rpc/<过程路径>`，例如 `/rpc/threads/send`：
 {"json":{"defined":false,"code":"NOT_IMPLEMENTED","status":501,"message":"Procedure is not supported by this AgentForge version"}}
 ```
 
-SSE 的 message 数据也带 json 封装，流内错误使用 error；无 Run 的清空事件省略 runId。会话游标在消息事务内原子递增，独立于 REST Run 游标，Last-Event-ID 优先于 cursor。等待不占用数据库连接；逐条发送前复查授权。当前不是逐 token 流式输出。
+SSE 的 message 数据也带 json 封装，流内错误使用 error；无 Run 的清空事件省略 runId。会话游标在消息事务内原子递增，独立于 REST Run 游标，Last-Event-ID 优先于 cursor。等待不占用数据库连接；逐条发送前复查授权。模型可启用上游 SSE，正文按受限批次持久化并投影到原版进度事件；不是每个 token 单独提交数据库。
 
 ## 后端会话扩展
 
@@ -68,7 +69,7 @@ create 接收 botId、expectedThreadId、requestId、可选 title；select 接�
 
 ## 数据库与验证
 
-最新迁移 `0011`。`0011` 新增用户模型偏好，不修改历史运行。`0007` 建立 RPC 展示、浏览器会话和消息事件回填；`0008` 增加当前会话选择与无 Run 的清空事件；`0009` 增加密码凭据和浏览器会话关联；`0010` 增加个人技能资产和版本表，有个人版本时拒绝降级。迁移不创建用户或默认密码，不清空已有聊天和 Run。降级 0009 会删除密码凭据并使密码会话失效，保留令牌桥会话与其他业务数据。
+当前最新迁移为 `0016`；以下说明 0007–0011 的历史变更。`0011` 新增用户模型偏好，不修改历史运行。`0007` 建立 RPC 展示、浏览器会话和消息事件回填；`0008` 增加当前会话选择与无 Run 的清空事件；`0009` 增加密码凭据和浏览器会话关联；`0010` 增加个人技能资产和版本表，有个人版本时拒绝降级。迁移不创建用户或默认密码，不清空已有聊天和 Run。降级 0009 会删除密码凭据并使密码会话失效，保留令牌桥会话与其他业务数据。
 
 ```bash
 uv run --env-file .env --locked alembic upgrade head
@@ -80,3 +81,5 @@ AGENTFORGE_RAKAZO_ROOT=/path/to/rakazo uv run --locked --offline pytest tests/te
 ## 流式正文
 
 开启模型快照 stream 后，Worker 的 model_text 事件事务化投影到 thread.progress。使用原版 payload.text / delta / streaming 字段，原版前端无需修改；运行中的 threads.get 返回 progress:<runId> 临时消息，使刷新后可从快照游标续传。成功、失败、取消时去除临时消息，只有最终成功答案写入正式消息。重试用 thread.message.updated 清除旧尝试的草稿；跨租户、空间、用户和撤权检查复用已有策略。事件持久化与边界详见 [模型路由](model-routing.md#可选流式回复)。
+
+工具 Activity 的状态与历史语义见 [执行记录](activity.md)。

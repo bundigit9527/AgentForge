@@ -4,6 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from agentforge_core.browser import Origin, browser_tools
 from agentforge_core.mcp import McpToolSnapshot
 from agentforge_core.reports import exports_csv
 from agentforge_core.skills import SkillReference, SkillSnapshot
@@ -49,12 +50,23 @@ class ExecutionSnapshot(BaseModel):
     skills: tuple[SkillSnapshot, ...] = Field(default=(), max_length=8)
     # Optional per-run composer selection; older snapshots default to no explicit choice.
     requested_skill: SkillReference | None = None
+    browser_origins: tuple[Origin, ...] = Field(default=(), max_length=32)
+    # Historical runs retain their original tool set.
+    browser_reading: bool = Field(default=False, strict=True)
 
     @model_validator(mode="after")
     def validate_skills(self):
         if self.mcp_tools and self.model.provider != "chat_completions":
             raise ValueError("MCP tools require a real-model execution profile")
-        refs = [*self.tools, *(t.reference for t in self.mcp_tools)]
+        if self.browser_reading and not self.browser_origins:
+            raise ValueError("Reading tools require browser origins")
+        if self.browser_origins and self.model.provider != "chat_completions":
+            raise ValueError("Browser tools require Chat Completions")
+        refs = [
+            *self.tools,
+            *(t.reference for t in self.mcp_tools),
+            *(browser_tools(self.browser_reading) if self.browser_origins else ()),
+        ]
         if any(exports_csv(t) and t.reference not in self.approval_tools for t in self.mcp_tools):
             raise ValueError("CSV export must use the approval workflow")
         if not set(self.approval_tools) <= set(refs):

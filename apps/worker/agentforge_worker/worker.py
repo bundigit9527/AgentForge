@@ -4,13 +4,16 @@ import math
 from contextlib import nullcontext
 from threading import Event
 
+from agentforge_connectors.browser import browser_request
 from agentforge_connectors.mcp import McpService
+from agentforge_core.browser import browser_tools
 from agentforge_core.models import RunErrorCode
 from agentforge_runtime.attachment_tools import (
     READ_ATTACHMENT,
     WRITE_ATTACHMENT,
     with_attachment_tools,
 )
+from agentforge_runtime.browser_tools import with_browser_tools
 from agentforge_runtime.chat_harness import configured_harness
 from agentforge_runtime.chat_model import RuntimeFailure
 from agentforge_runtime.config import ModelSettings
@@ -93,6 +96,17 @@ class Worker:
                     runtime_allowed = (*runtime_allowed, SKILL_READ)
                 prompt = claim.run.prompt
                 allowed_reads = mcp_refs
+                if snapshot.browser_origins:
+                    browser_refs = browser_tools(snapshot.browser_reading)
+                    registry = with_browser_tools(
+                        registry,
+                        lambda arguments: browser_request(claim, arguments),
+                        snapshot.browser_origins,
+                        reading=snapshot.browser_reading,
+                    )
+                    runtime_tools = (*runtime_tools, *browser_refs)
+                    runtime_allowed = (*runtime_allowed, *browser_refs)
+                    allowed_reads = (*allowed_reads, *browser_refs)
                 if claim.run.input_files and snapshot.model.provider == "chat_completions":
                     registry = with_attachment_tools(
                         registry,

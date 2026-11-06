@@ -229,3 +229,6 @@ mcp.local.json
 
 # Local Docker Supervisor credential
 .env.supervisor
+
+# Local desktop state, browser grants and acceptance evidence
+.local/

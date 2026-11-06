@@ -494,6 +494,24 @@ class RunRepository:
     def record_tool(self, claim: Claim, name: str) -> bool:
         return self._record_attempt_event(claim, "tool_started", {"name": name})
 
+    def active_claim(self, run_id, attempt_id):
+        """Trusted service boundary; derive identity from the owned Run, never request fields."""
+        with self.engine.connect() as conn:
+            row = (
+                conn.execute(
+                    sa.select(runs).where(runs.c.run_id == run_id, runs.c.attempt_id == attempt_id)
+                )
+                .mappings()
+                .first()
+            )
+            if row is None:
+                return None
+            claim = Claim(_run(row), attempt_id)
+            valid = conn.execute(
+                sa.select(runs.c.run_id).where(self._owned(claim, self.clock()))
+            ).first()
+            return claim if valid else None
+
     def owns_claim(self, claim: Claim) -> bool:
         with self.engine.connect() as connection:
             return (
