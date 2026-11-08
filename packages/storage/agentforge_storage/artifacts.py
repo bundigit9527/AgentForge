@@ -286,3 +286,48 @@ def save_attachment_result(conn, run, args):
                 createdAt=iso(run["updated_at"]),
             ),
         )
+
+
+def save_generated_files(conn, run, call_id, files):
+    from agentforge_core.python_execution import FILE_MIMES, GeneratedFile, output_name
+
+    if (
+        not 1 <= len(files) <= 4
+        or len({f.name for f in files}) != len(files)
+        or sum(len(f.data) for f in files) > MAX_FILE
+    ):
+        raise ValueError("Invalid generated file batch")
+    scope = Scope(run["tenant_id"], run["space_id"], run["user_id"])
+    for file in files:
+        if (
+            not isinstance(file, GeneratedFile)
+            or not 0 < len(file.data) <= MAX_FILE
+            or file.mime_type != FILE_MIMES["." + output_name(file.name).rsplit(".", 1)[-1].lower()]
+        ):
+            raise ValueError("Invalid generated file")
+        key = "p:" + hashlib.sha256((call_id + ":" + file.name).encode()).hexdigest()
+        row, new = store_file(
+            conn,
+            scope,
+            run["agent_id"],
+            run["run_id"],
+            file.name,
+            file.mime_type,
+            None,
+            file.data,
+            key,
+            run["updated_at"],
+        )
+        if new and run["thread_id"]:
+            append(
+                conn,
+                run,
+                "thread.message.created",
+                dict(
+                    messageId=row["artifact_id"],
+                    botId=run["agent_id"],
+                    role="bot",
+                    blocks=[file_block(row)],
+                    createdAt=iso(run["updated_at"]),
+                ),
+            )

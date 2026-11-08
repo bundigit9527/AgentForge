@@ -129,7 +129,7 @@ class Authorization:
                 )
                 .exists()
             )
-        for skill in config.skills:
+        for skill in config.available_skills:
             if skill.source == "hub":
                 # Uninstall hides future selection; existing snapshots keep their owner access.
                 checks.append(

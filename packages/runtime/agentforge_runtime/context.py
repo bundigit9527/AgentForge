@@ -24,6 +24,11 @@ def context_size(messages: list[dict], tools: list[dict]) -> int:
     )
 
 
+def context_bytes(messages: list[dict], tools: list[dict]) -> int:
+    """UTF-8 request-context size, shared by selection and audit statistics."""
+    return len(json.dumps({"messages": messages, "tools": tools}, ensure_ascii=False).encode())
+
+
 class ContextWindow:
     def __init__(
         self,
@@ -56,6 +61,14 @@ class ContextWindow:
         notice = [{"role": "system", "content": OMITTED_HISTORY_NOTICE}] if dropped else []
         return [*self.prefix, *notice, *history, *self.current]
 
+    def within_budget(self, messages):
+        if context_size(messages, self.tools) > self.config.context_max_chars:
+            return False
+        if self.config.context_max_bytes is not None:
+            if context_bytes(messages, self.tools) > self.config.context_max_bytes:
+                return False
+        return True
+
     def fit(self) -> tuple[list[dict], dict | None]:
         messages = self._messages(self.history, self.dropped_turns)
         if self.config.context_policy == "reject":
@@ -64,8 +77,10 @@ class ContextWindow:
                 raise RuntimeFailure(RunErrorCode.MODEL_LIMIT_EXCEEDED)
             return messages, None
         before = context_size(messages, self.tools)
-        if before <= self.config.context_max_chars:
+        if self.within_budget(messages):
             return messages, None
+        byte_budget = self.config.context_max_bytes
+        before_bytes = context_bytes(messages, self.tools) if byte_budget is not None else None
         remaining = list(self.history)
         removed = 0
         while remaining:
@@ -73,7 +88,7 @@ class ContextWindow:
             removed += 1
             messages = self._messages(remaining, self.dropped_turns + removed)
             after = context_size(messages, self.tools)
-            if after <= self.config.context_max_chars:
+            if self.within_budget(messages):
                 self.history = remaining
                 self.dropped_turns += removed
                 return messages, {
@@ -82,6 +97,15 @@ class ContextWindow:
                     "after_chars": after,
                     "dropped_turns": removed,
                     "retained_turns": len(remaining) // 2,
+                    **(
+                        {
+                            "budget_bytes": byte_budget,
+                            "before_bytes": before_bytes,
+                            "after_bytes": context_bytes(messages, self.tools),
+                        }
+                        if byte_budget is not None
+                        else {}
+                    ),
                 }
         # Never truncate instructions, the current prompt, tool schemas or any
         # current-turn tool arguments/results. Stop before the next model request.

@@ -76,6 +76,37 @@ if (process.env.AGENTFORGE_BROWSER_INTEROP) {
     await assert.rejects(() => browserRpc.bots.update({botId:bot.id, modelProvider:'chat_completions', modelId:'unknown'}), (error:any) => error.status === 422);
     assert(first.runId);
   }
+  if (process.env.AGENTFORGE_MODEL_MANAGEMENT_INTEROP) {
+    const catalog = (await browserRpc.models.list()).map((item:any) => contracts.ModelCatalogEntrySchema.parse(item));
+    assert(catalog.some((m:any)=>m.provider === 'openai-compatible'));
+    const probe = await browserRpc.models.probeOpenAiCompatible({baseUrl:'https://model.example/v1', apiKey:'personal-test-key-do-not-use'});
+    assert.deepEqual(probe.models, ['alpha', 'beta']);
+    const connected = contracts.ModelCredentialSchema.parse(await browserRpc.models.connect({provider:'openai-compatible',baseUrl:'https://model.example/v1',modelId:'alpha',apiKey:'personal-test-key-do-not-use',reasoning:false,thinkingLevel:null,supportsImages:false,maxTokens:4096,contextWindow:32768}));
+    assert(connected.hasKey && connected.isDefault);
+    await browserRpc.models.connect({provider:'openai-compatible',baseUrl:'https://model.example/v1',modelId:'beta'});
+    await browserRpc.models.setDefault({provider:'openai-compatible',modelId:'alpha',thinkingLevel:null});
+    const scopeMe=await browserRpc.me();
+    const context={spaceId: scopeMe.spaceId};
+    // Match the original ModelBackupsSettings load/save preflight exactly.
+    assert.equal((await browserRpc.me({context})).spaceId, context.spaceId);
+    assert.deepEqual(await browserRpc.models.backups({}, {context}), []);
+    const backups=[{provider:'openai-compatible',modelId:'beta'}];
+    assert.equal((await browserRpc.me({context})).userId, scopeMe.userId);
+    await browserRpc.models.setBackups(backups, {context});
+    assert.deepEqual(await browserRpc.models.backups({}, {context}), backups);
+    const bot=contracts.BotSchema.parse(await browserRpc.bots.create({name:'Personal model'}));
+    assert.equal(bot.modelProvider, 'openai-compatible');
+    await browserRpc.threads.send({botId:bot.id,text:'Hello personal model'});
+    await exchange({type:'worker'});
+    const thread=contracts.ThreadSnapshotSchema.parse(await browserRpc.threads.get({botId:bot.id}));
+    assert.equal(thread.run?.status, 'completed');
+    assert(JSON.stringify(thread).includes('Personal model chat completed'));
+    assert.equal((await browserRpc.me({context})).spaceId, context.spaceId);
+    await browserRpc.models.setBackups([], {context});
+    assert.deepEqual(await browserRpc.models.backups({}, {context}), []);
+    await browserRpc.models.disconnect({provider:'openai-compatible'});
+    assert.deepEqual(await browserRpc.models.credentials(), []);
+  }
   await auth.signOut();
   assert.equal((await auth.getSession()).data, null);
   process.stdout.write(JSON.stringify({type:'complete', checks:'Better Auth session client and cookie RPC'})+'\n');
@@ -144,7 +175,7 @@ contracts.AppBootstrapSchema.parse(initial);
 const bot = contracts.BotSchema.parse(await rpc.bots.create({name:'真实 oRPC 客户端', instructions:'test', spawnKey:'interop:first'}));
 contracts.SpaceNavigationSchema.parse(await rpc.spaces.list());
 const skillCatalog = (await rpc.agentSkills.list()).map((entry:any) => contracts.AgentSkillCatalogEntrySchema.parse(entry));
-assert.equal(skillCatalog.length, 3);
+assert.equal(skillCatalog.length, 4);
 const selectedSkill = skillCatalog.find((entry:any) => entry.id === 'builtin:document_summary@1');
 assert(selectedSkill?.readOnly);
 const skillDetail = contracts.AgentSkillSchema.parse(await rpc.agentSkills.get({skillId:selectedSkill.id}));

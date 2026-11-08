@@ -7,6 +7,7 @@ from threading import Event
 
 from agentforge_connectors.mcp import McpService
 from agentforge_connectors.mcp_config import McpSettings
+from agentforge_connectors.model_manager import ModelManager
 from agentforge_core.settings import Settings
 from agentforge_runtime.chat_harness import configured_harness
 from agentforge_runtime.config import ModelSettings
@@ -50,8 +51,10 @@ def main() -> None:
         with ExitStack() as resources:
             engine = create_database(settings.database_url)
             resources.callback(engine.dispose)
+            repository = RunRepository(engine, auth_mode=settings.auth_mode)
             worker = Worker(
-                RunRepository(engine, auth_mode=settings.auth_mode),
+                repository,
+                model_manager=ModelManager(repository, model_settings),
                 harness_factory=lambda snapshot: configured_harness(
                     model_settings.for_snapshot(snapshot.model)
                 ),

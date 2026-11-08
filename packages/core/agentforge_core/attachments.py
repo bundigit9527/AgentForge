@@ -5,6 +5,9 @@ from typing import Literal
 TEXT_TYPES = frozenset({"text/plain", "text/markdown", "text/csv", "text/html", "application/json"})
 FILE_TYPES = TEXT_TYPES | {
     "application/pdf",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/zip",
     "image/jpeg",
     "image/png",

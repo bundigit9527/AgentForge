@@ -6,6 +6,9 @@ from threading import Event
 
 from agentforge_connectors.browser import browser_request
 from agentforge_connectors.mcp import McpService
+from agentforge_connectors.model_execution import managed_harness
+from agentforge_connectors.python_execution import PythonPolicy, PythonService, PythonSettings
+from agentforge_connectors.web import WebService
 from agentforge_core.browser import browser_tools
 from agentforge_core.models import RunErrorCode
 from agentforge_runtime.attachment_tools import (
@@ -19,8 +22,10 @@ from agentforge_runtime.chat_model import RuntimeFailure
 from agentforge_runtime.config import ModelSettings
 from agentforge_runtime.harness import ExecutionStopped, Harness
 from agentforge_runtime.mcp_tools import with_mcp_tools
+from agentforge_runtime.python_tools import with_python_tool
 from agentforge_runtime.skill_tools import SKILL_READ, with_skill_reader
 from agentforge_runtime.tools import BUILTIN_TOOLS, DEFAULT_TOOLS, ToolExecutor, ToolRegistry
+from agentforge_runtime.web_tools import with_web_tools
 from agentforge_storage.repository import RunRepository
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -40,6 +45,7 @@ class Worker:
         lease_seconds: int = 60,
         heartbeat_interval: float | None = None,
         harness_factory=None,
+        model_manager=None,
         tool_registry: ToolRegistry = BUILTIN_TOOLS,
         allowed_tools: tuple[str, ...] = DEFAULT_TOOLS,
         mcp_service: McpService | None = None,
@@ -52,6 +58,7 @@ class Worker:
         self.mcp_service = mcp_service or McpService()
         self.allowed_tools = allowed_tools
         self.repository = repository
+        self.model_manager = model_manager
         self.harness = harness
         self.harness_factory = harness_factory or (
             lambda snapshot: configured_harness(ModelSettings().for_snapshot(snapshot.model))
@@ -73,7 +80,14 @@ class Worker:
                     raise RuntimeFailure(RunErrorCode.EXECUTION_CONFIG_MISSING)
 
                 def owns_execution():
-                    return not heartbeat.lost.is_set() and self.repository.owns_claim(claim)
+                    if heartbeat.lost.is_set() or not self.repository.owns_claim(claim):
+                        return False
+                    if snapshot.python_image and (
+                        not PythonPolicy.from_env().permits(claim.run.scope)
+                        or PythonSettings.from_env().image != snapshot.python_image
+                    ):
+                        raise RuntimeFailure(RunErrorCode.TOOL_NOT_ALLOWED)
+                    return True
 
                 registry = self.tool_registry
                 runtime_tools = snapshot.tools
@@ -90,12 +104,24 @@ class Worker:
                     )
                     runtime_tools = (*runtime_tools, *mcp_refs)
                     runtime_allowed = (*runtime_allowed, *mcp_refs)
-                if snapshot.skills:
-                    registry = with_skill_reader(registry, snapshot.skills)
+                if snapshot.available_skills:
+                    registry = with_skill_reader(registry, snapshot.available_skills)
                     runtime_tools = (*runtime_tools, SKILL_READ)
                     runtime_allowed = (*runtime_allowed, SKILL_READ)
                 prompt = claim.run.prompt
                 allowed_reads = mcp_refs
+                if snapshot.web_origins:
+                    web_refs = ("web_fetch@1",) + (
+                        ("web_search@1",) if snapshot.web_search_endpoint else ()
+                    )
+                    registry = with_web_tools(
+                        registry,
+                        WebService(claim.run.scope, snapshot, owns_execution),
+                        search=bool(snapshot.web_search_endpoint),
+                    )
+                    runtime_tools = (*runtime_tools, *web_refs)
+                    runtime_allowed = (*runtime_allowed, *web_refs)
+                    allowed_reads = (*allowed_reads, *web_refs)
                 if snapshot.browser_origins:
                     browser_refs = browser_tools(snapshot.browser_reading)
                     registry = with_browser_tools(
@@ -107,6 +133,13 @@ class Worker:
                     runtime_tools = (*runtime_tools, *browser_refs)
                     runtime_allowed = (*runtime_allowed, *browser_refs)
                     allowed_reads = (*allowed_reads, *browser_refs)
+                if snapshot.python_image:
+                    registry = with_python_tool(
+                        registry,
+                        PythonService(claim.run.scope, snapshot.python_image, owns_execution),
+                    )
+                    runtime_tools = (*runtime_tools, "python_execute@1")
+                    runtime_allowed = (*runtime_allowed, "python_execute@1")
                 if claim.run.input_files and snapshot.model.provider == "chat_completions":
                     registry = with_attachment_tools(
                         registry,
@@ -138,6 +171,11 @@ class Worker:
                     runtime = (
                         nullcontext(self.harness)
                         if self.harness is not None
+                        else managed_harness(
+                            self.model_manager, claim.run.scope, snapshot, owns_execution
+                        )
+                        if self.model_manager is not None
+                        and (snapshot.model.connection_id or snapshot.model_backups)
                         else self.harness_factory(snapshot)
                     )
                 except ValueError:
@@ -148,9 +186,7 @@ class Worker:
                     result = harness.execute(
                         prompt,
                         before_tool=lambda _name: owns_execution(),
-                        checkpoint=lambda: (
-                            not heartbeat.lost.is_set() and self.repository.owns_claim(claim)
-                        ),
+                        checkpoint=owns_execution,
                         on_model=lambda **data: (
                             not heartbeat.lost.is_set()
                             and self.repository.record_model(claim, **data)
@@ -171,7 +207,7 @@ class Worker:
             logger.info("Execution stopped for run %s", claim.run.run_id)
         except Exception as exc:
             # Do not expose provider exceptions, credentials or tool input in the public API.
-            logger.error("Execution failed for run %s", claim.run.run_id)
+            logger.error("Execution failed for run %s (%s)", claim.run.run_id, type(exc).__name__)
             if not heartbeat.lost.is_set():
                 code = (
                     exc.code if isinstance(exc, RuntimeFailure) else RunErrorCode.EXECUTION_FAILED

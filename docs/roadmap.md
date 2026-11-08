@@ -1,14 +1,29 @@
 # AgentForge 开发路线图
 
-状态：以原版 Rakazo `d165de43` 为兼容基线，Python Harness 为执行引擎。更新日期：2026-11-06。当前能力以本节及 [对齐矩阵](rakazo-alignment.md) 为准，下方阶段记录保留各自当时的验收范围。
+状态：以原版 Rakazo `d165de43` 为兼容基线，Python Harness 为执行引擎。更新日期：2026-11-08。当前能力以本节及 [对齐矩阵](rakazo-alignment.md) 为准，下方阶段记录保留各自当时的验收范围。
 
 本路线图基于 [项目架构](architecture.md)，以可验证的业务流程推进，不预设未经验证的工期或并发容量。
+
+## 当前增量：Skill 使用 P0（2026-11-08）
+
+- [x] 普通 RPC 聊天发现当前用户可执行的技能，按预算固定目录和版本。
+- [x] 显式选择强制准确读取，拒绝跳过 / 换读；审批恢复不重新规划。
+- [x] 依赖检查使用完整的本次工具授权，新 Bot 默认支持文本统计；旧 Bot 保持配置并返回明确缺项。
+- [x] 覆盖个人模型、旧会话、版本固定、取消、共享撤权和私人目录隔离。
+
+后续 Skill 工作：模型侧创建 / 更新 / 删除、示教录制、长正文与资源包。任务侧仍需独立 Task / Board、执行中追加消息、通用 ask_user、通用恢复、长期记忆、Computer 完整操作、Routine、子 Agent 及写操作审批体验；本次不将这些标为完成。实现边界和手工用例见 [Skill 说明](skills.md)。
 
 ## P0 收口
 
 当前已完成原版 Web、真实 DeepSeek、独立 PostgreSQL 和可见桌面的整链路验收，修复过期浏览器快照导致整轮终止的问题，并补齐本机配置与启动入口，详见 [P0 验收](p0-acceptance.md)。下一阶段依次推进通用 Computer／动态网页、记忆与压缩、独立 Task／Routine，再补 Skill／MCP 管理和原版产品功能；Ubuntu 验收并行推进。
 
+## 本轮模型管理
+
+已接通原版页面的 DeepSeek / OpenAI Compatible 个人连接、探测、默认与 Bot 模型、断开及有序备用，迁移至 0017。保留纯 Python Harness，其他供应商原生协议与 OAuth 后续按需推进。详见 [模型管理](model-management.md)。
+
 ## 当前工程顺序
+
+本轮补齐独立的 `web_search` / `web_fetch`，真实 DeepSeek 已完成搜索、读取来源与引用验收。保留 Python Harness、原版 Web 和现有 Activity，不要求模型或用户预先提供 URL。网页搜索不等于完整浏览器自动化；JavaScript 页面、表单与登录态仍列为下一阶段。配置和边界见 [联网工具](web-tools.md)。
 
 1. 已交付 `7af98bd`：显式开放注册、在线改密、聊天附件、桌面空闲挂起和停机文件浏览。此前已支持审批恢复、Team / Private、Terminal、工作区归档及 Docker 交付。
 2. 本轮：接通原版 Activity 列表与工具执行记录。共享同一 Run / ToolJournal，不增加新的执行循环或页面；失败、取消与过期租约的未知结果保持真实状态。
@@ -275,3 +290,8 @@ threads.answer。支持允许本次／始终允许／拒绝、刷新恢复、重
 版本化 approval_tools 默认空，通过 REST Agent 配置启用，仍仅允许现有纯函数和受控只读 MCP。
 迁移 0013 尚未应用到开发库；API 和 Worker 需统一升级。放行规则提供 REST 查询与撤销，
 原版规则管理页、自动审核和外部写连接器尚未实现。详见 [审批说明](external-effects.md)。
+
+
+## Python 文件生成补充（2026-11-08）
+
+新增独立 Python 执行容器、PPT生成 Skill、二进制附件原子交付，继续使用原有 Python Harness 和原版 Rakazo Web。默认关闭并按用户授权；旧 Run 保持不变。脚本执行每次使用空目录，尚不复用 Team/Private 桌面文件或运行通用 Shell。配置、验收及 Rakazo 逐项差异见 [Python 自动文件生成](python-execution.md)。

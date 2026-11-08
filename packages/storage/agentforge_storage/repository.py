@@ -538,13 +538,29 @@ class RunRepository:
         after_chars: int,
         dropped_turns: int,
         retained_turns: int,
+        budget_bytes: int | None = None,
+        before_bytes: int | None = None,
+        after_bytes: int | None = None,
     ) -> bool:
+        byte_stats = (budget_bytes, before_bytes, after_bytes)
+        has_bytes = any(value is not None for value in byte_stats)
+        if has_bytes and (
+            any(type(value) is not int for value in byte_stats)
+            or not 1024 <= budget_bytes <= 2147483647
+            or not 0 <= after_bytes <= budget_bytes
+            or before_bytes < 0
+        ):
+            raise ValueError("Invalid context trimming byte statistics")
+        # Either independent limit can trigger trimming. Chinese text may fit the
+        # character budget but exceed UTF-8 bytes; audit must accept that decision.
         values = (step, budget_chars, before_chars, after_chars, dropped_turns, retained_turns)
         if (
             any(type(value) is not int for value in values)
             or not 1 <= step <= 32
             or not 4000 <= budget_chars <= 200000
-            or not 0 <= after_chars <= budget_chars < before_chars
+            or not 0 <= after_chars <= budget_chars
+            or before_chars < 0
+            or not (before_chars > budget_chars or (has_bytes and before_bytes > budget_bytes))
             or not 1 <= dropped_turns <= 20
             or not 0 <= retained_turns <= 20 - dropped_turns
         ):
@@ -560,6 +576,15 @@ class RunRepository:
                 "after_chars": after_chars,
                 "dropped_turns": dropped_turns,
                 "retained_turns": retained_turns,
+                **(
+                    {
+                        "budget_bytes": budget_bytes,
+                        "before_bytes": before_bytes,
+                        "after_bytes": after_bytes,
+                    }
+                    if has_bytes
+                    else {}
+                ),
             },
         )
 
@@ -782,6 +807,7 @@ class RunRepository:
         output: dict | None = None,
         content: str | None = None,
         error_code: RunErrorCode | None = None,
+        files: tuple = (),
     ) -> bool:
         if error_code is not None and not isinstance(error_code, RunErrorCode):
             raise ValueError("Expected a public tool failure code")
@@ -832,6 +858,16 @@ class RunRepository:
                 .mappings()
                 .one()
             )
+            if files:
+                from agentforge_storage.artifacts import save_generated_files
+
+                if (
+                    error_code
+                    or call["name"] != "python_execute"
+                    or not claim.run.execution_config.python_image
+                ):
+                    raise ValueError("Generated files require Python execution authorization")
+                save_generated_files(connection, row, ticket.tool_call_id, files)
             if error_code is None and call["name"] == "write_attachment" and row["input_files"]:
                 save_attachment_result(connection, row, call["arguments"])
             _event(

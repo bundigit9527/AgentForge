@@ -13,10 +13,20 @@ class Empty(RpcInput):
     pass
 
 
+class MeContext(RpcInput):
+    spaceId: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class MeInput(RpcInput):
+    # Original ModelBackupsSettings passes client options in the input slot.
+    # Treat the space as a precondition only, never as an authorization source.
+    context: MeContext | None = None
+
+
 class SetDefaultModel(RpcInput):
     provider: str = Field(min_length=1, max_length=80)
     modelId: str = Field(min_length=1, max_length=128)
-    thinkingLevel: None = None
+    thinkingLevel: Literal["off"] | None = None
 
 
 class Target(RpcInput):
@@ -103,7 +113,7 @@ class UpdateBot(Target):
     # Disabled defaults are sent by the original settings form even on unrelated saves.
     memoryScope: None = None
     voiceId: None = None
-    thinkingLevel: None = None
+    thinkingLevel: Literal["off"] | None = None
     sectionId: None = None
     autoSpeak: bool = Field(default=False, strict=True)
     teamChatAmbientEnabled: bool = Field(default=False, strict=True)

@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from agentforge_core.execution import ExecutionSnapshot
-from agentforge_core.models import Run, RunEvent, RunStatus
+from agentforge_core.models import Run, RunEvent, RunStatus, Scope
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -27,7 +27,11 @@ class RunResponse(BaseModel):
     execution_config: ExecutionSnapshot | None
 
     @classmethod
-    def from_run(cls, run: Run) -> "RunResponse":
+    def from_run(cls, run: Run, *, viewer: Scope | None = None) -> "RunResponse":
+        config = run.execution_config
+        if config is not None and viewer is not None and viewer != run.scope:
+            # Sharing a result is not sharing all the owner's discoverable skill recipes.
+            config = config.model_copy(update={"catalog_skills": (), "catalog_omitted": 0})
         return cls(
             run_id=run.run_id,
             status=run.status,
@@ -39,7 +43,7 @@ class RunResponse(BaseModel):
             thread_id=run.thread_id,
             agent_id=run.agent_id,
             agent_version=run.agent_version,
-            execution_config=run.execution_config,
+            execution_config=config,
         )
 
 

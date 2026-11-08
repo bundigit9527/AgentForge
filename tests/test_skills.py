@@ -78,7 +78,12 @@ def skill_client(settings, repository, hub):
 def test_default_skills_are_available_without_a_hub(client, headers):
     assert client.get("/api/v1/skills").status_code == 401
     page = client.get("/api/v1/skills", headers=headers).json()
-    assert [s["manifest"]["name"] for s in page["items"]] == ["资料摘要", "会议纪要", "文本统计"]
+    assert [s["manifest"]["name"] for s in page["items"]] == [
+        "资料摘要",
+        "会议纪要",
+        "文本统计",
+        "PPT生成",
+    ]
     assert all(s["source"] == "builtin" for s in page["items"])
     assert page["next_offset"] is None
     assert client.get("/api/v1/skills/hub", headers=headers).status_code == 503
@@ -95,7 +100,7 @@ def test_browse_preview_install_and_paginate(skill_client, hub, headers):
     page = skill_client.get("/api/v1/skills/hub?q=研究&limit=5", headers=headers).json()
     assert page["source_id"] == hub.source_id
     assert hub.requests[-1] == (0, 5, "研究")
-    assert len(skill_client.get("/api/v1/skills", headers=headers).json()["items"]) == 3
+    assert len(skill_client.get("/api/v1/skills", headers=headers).json()["items"]) == 4
     preview = skill_client.get("/api/v1/skills/hub/research_summary/versions/1", headers=headers)
     assert preview.status_code == 200
     assert preview.json()["sha256"] == hub.document.digest()
@@ -105,8 +110,9 @@ def test_browse_preview_install_and_paginate(skill_client, hub, headers):
     assert again.json()["reference"] == installed.json()["reference"]
     first = skill_client.get("/api/v1/skills?limit=2", headers=headers).json()
     second = skill_client.get("/api/v1/skills?limit=2&offset=2", headers=headers).json()
-    assert first["next_offset"] == 2 and second["next_offset"] is None
-    assert second["items"][1] == installed.json()
+    third = skill_client.get("/api/v1/skills?limit=2&offset=4", headers=headers).json()
+    assert first["next_offset"] == 2 and second["next_offset"] == 4
+    assert third["next_offset"] is None and third["items"][0] == installed.json()
     assert "tenant_id" not in installed.json()
 
 
@@ -154,7 +160,7 @@ def test_installations_are_scoped_and_cannot_be_bound_by_another_user(
     with TestClient(
         create_app(other, repository, model_settings=ModelSettings(), skill_hub=hub)
     ) as client:
-        assert len(client.get("/api/v1/skills", headers=headers).json()["items"]) == 3
+        assert len(client.get("/api/v1/skills", headers=headers).json()["items"]) == 4
         assert (
             client.post(
                 "/api/v1/agents", json={"name": "a", "skills": [reference]}, headers=headers
@@ -209,7 +215,7 @@ def test_uninstall_only_removes_future_selection_and_reinstall_reuses_id(
         ).status_code
         == 204
     )
-    assert len(skill_client.get("/api/v1/skills", headers=headers).json()["items"]) == 3
+    assert len(skill_client.get("/api/v1/skills", headers=headers).json()["items"]) == 4
     assert (
         skill_client.post(
             "/api/v1/agents", json={"name": "new", "skills": [reference]}, headers=headers

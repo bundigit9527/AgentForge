@@ -18,10 +18,10 @@
 | `threads.subscribe` | 原版 oRPC SSE；跨多轮保持订阅、断线续传 |
 | `agentforge.conversations.list/create/select` | 后端扩展；原版 Rakazo 页面不使用 |
 | 分组、归档、分区、定时任务 | 未提供资产时只读返回空集合 |
-| models.list / credentials / setDefault | 服务端模型目录、托管路由元数据与按用户保存的默认选择；Bot 可选择目录中的模型 |
+| models.list / credentials / connect / probeCatalog / probeOpenAiCompatible / setDefault / disconnect / backups / setBackups | DeepSeek、OpenAI Compatible 个人连接和有序备用，保留托管路由。详见 [模型管理](model-management.md) |
 | 其余写操作 | 明确返回错误，不伪造成功 |
 
-已支持 Bot 文本与附件消息、受控桌面操作和人工审批。语音、长期记忆、分组、独立 Task 和前端模型凭据管理仍待接入。原版入口保留，错误由原有组件处理；不注入统一错误浮层。Board 使用原版 `me.ticketBoardEnabled` 标记保留入口，业务接口仍返回未实现错误。
+已支持 Bot 文本与附件消息、受控桌面操作和人工审批。语音、长期记忆、分组、独立 Task、模型 OAuth 和其他供应商协议仍待接入。原版入口保留，错误由原有组件处理；不注入统一错误浮层。Board 使用原版 `me.ticketBoardEnabled` 标记保留入口，业务接口仍返回未实现错误。
 
 原版 Skill 浏览和聊天选择的字段映射、权限及版本限制见 [Skill 接入](skills.md#原版-rakazo-web-接入)。个人技能支持 create / update / remove，内置和 Hub 安装副本保持只读；录制示教的 `skills.*` 仍返回 501，Hub 安装复用现有 REST。
 

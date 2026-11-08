@@ -1,5 +1,7 @@
 # Python 可见浏览器
 
+自主搜索与正文抓取已通过独立的 `web_search` / `web_fetch` 实现，见 [联网工具](web-tools.md)。这两项工具在 Worker 中运行，不显示在电脑画面；需要展示页面操作时仍使用下方可见浏览器链路，其动态网页限制不因搜索工具上线而改变。
+
 对应 Rakazo `d165de43` 的 `browser-tools.ts` / `ComputerBrowserProvider`：工具应控制 Computer 上实际显示的 Chromium，而不是后台抓取后假装电脑已经操作。Rakazo 提供 navigate / snapshot / act（click、fill、type），工具入口未写死财经域名。AgentForge 以 Python 实现公开网页的导航、分段读取、查找、滚动和链接点击，尚未完整复刻这些动作。
 
 ## 已实现的链路

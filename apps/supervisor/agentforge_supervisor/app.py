@@ -30,5 +30,9 @@ def create_app():
         return CsvSummary(**summary.model_dump(), csv=summary.csv_text())
 
     app = server.streamable_http_app(json_response=True, stateless_http=True)
+    if image := os.environ.get("AGENTFORGE_PYTHON_IMAGE"):
+        from agentforge_supervisor.python_endpoint import mount_python
+
+        mount_python(app, image)
     app.add_middleware(RequireWorkerToken, token=token.encode("ascii"))
     return app

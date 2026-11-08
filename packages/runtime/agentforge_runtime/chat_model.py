@@ -61,6 +61,7 @@ class ChatModel(Protocol):
         *,
         on_text: Callable[[str], None] | None = None,
         checkpoint: Callable[[], bool] = lambda: True,
+        tool_choice: dict | None = None,
     ) -> Completion: ...
 
 
@@ -87,6 +88,7 @@ class ChatCompletionsModel:
         *,
         on_text: Callable[[str], None] | None = None,
         checkpoint: Callable[[], bool] = lambda: True,
+        tool_choice: dict | None = None,
     ) -> Completion:
         if not checkpoint():
             raise ExecutionStopped()
@@ -95,11 +97,13 @@ class ChatCompletionsModel:
             with self._client.stream(
                 "POST",
                 self.settings.base_url.rstrip("/") + "/chat/completions",
-                headers={"Authorization": f"Bearer {self.settings.api_key}"},
+                headers={"Authorization": f"Bearer {self.settings.api_key}"}
+                if self.settings.api_key
+                else {},
                 json={
                     "model": self.name,
                     "messages": messages,
-                    **({"tools": tools, "tool_choice": "auto"} if tools else {}),
+                    **({"tools": tools, "tool_choice": tool_choice or "auto"} if tools else {}),
                     "stream": self.settings.stream,
                     **({"stream_options": {"include_usage": True}} if self.settings.stream else {}),
                     "n": 1,
@@ -109,7 +113,13 @@ class ChatCompletionsModel:
                             "thinking": {"type": "disabled"},
                         }
                         if self.settings.api_style == "deepseek"
-                        else {"max_completion_tokens": self.settings.max_completion_tokens}
+                        else {
+                            (
+                                "max_tokens"
+                                if self.settings.api_style == "compatible"
+                                else "max_completion_tokens"
+                            ): self.settings.max_completion_tokens
+                        }
                     ),
                 },
             ) as response:

@@ -56,7 +56,7 @@ def send(client, headers, bot_id, text, nonce="skill-message"):
 def test_native_builtin_catalog_and_skill_markdown(client, headers):
     assert rpc(client, {}, "agentSkills.list").status_code == 401
     items = catalog(client, headers)
-    assert [item["name"] for item in items] == ["资料摘要", "会议纪要", "文本统计"]
+    assert [item["name"] for item in items] == ["资料摘要", "会议纪要", "文本统计", "PPT生成"]
     assert all(item["readOnly"] and item["source"] == "builtin" for item in items)
     assert all("content" not in item for item in items)
     detail = rpc(client, headers, "agentSkills.get", {"skillId": items[0]["id"]})
@@ -135,7 +135,7 @@ def test_composer_choice_is_per_run_and_does_not_change_agent(
     assert run.prompt == text
     assert run.execution_config.requested_skill == "builtin:document_summary@1"
     assert [s.reference for s in run.execution_config.skills] == ["builtin:document_summary@1"]
-    assert run.execution_config.tools == ("example_report@1",)
+    assert run.execution_config.tools == ("example_report@1", "text_stats@1")
     agent = client.get(f"/api/v1/agents/{bot['id']}", headers=headers).json()
     assert agent["version"] == 1 and agent["execution_config"]["skills"] == []
     assert Worker(repository).run_once()
@@ -149,7 +149,12 @@ def test_composer_choice_is_per_run_and_does_not_change_agent(
 
 
 def test_missing_tools_unknown_skill_and_forged_selection_leave_no_run(client, headers):
-    bot = create_bot(client, headers)
+    agent = client.post(
+        "/api/v1/agents",
+        headers=headers,
+        json={"name": "Restricted", "tools": ["example_report@1"]},
+    ).json()
+    bot = {"id": agent["agent_id"]}
     for text, status in [("/文本统计\nabc", 422), ("/missing recipe\nabc", 404)]:
         response = send(client, headers, bot["id"], text)
         assert response.status_code == status

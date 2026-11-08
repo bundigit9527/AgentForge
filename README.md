@@ -17,11 +17,13 @@ AgentForge 致力于连接企业知识、业务工作流、Agent 和 Skill，让
 - [开发入门](docs/development.md)：安装依赖、离线测试、当前接口及实现边界。
 - [任务执行协议](docs/task-execution.md)：提交去重、实时进度、断线续传和 Worker 运行方式。
 - [PostgreSQL 集成测试](docs/postgresql-testing.md)：独立测试库、临时 schema 隔离与可重复的验证步骤。
+- [页面模型管理](docs/model-management.md)：DeepSeek / OpenAI Compatible 连接、加密凭据、默认与备用。
 - [大模型路由](docs/model-routing.md)：兼容接口配置、工具循环、用量事件与真实联调边界。
 - [上下文管理](docs/context-management.md)：纯 Python Harness 的字符预算、完整历史轮次裁剪与调试。
 - [Agent 与会话](docs/conversations.md)：Agent 版本、消息、执行配置快照、尝试记录及手动调试。
 - [版本化工具](docs/tools.md)：工具注册、允许列表、输入输出验证、执行记录和调试。
 - [可见浏览器](docs/visible-browser.md)：Python 工具驱动所属 Computer 的 Chromium，访问公开 HTML、读取与点击链接。
+- [联网搜索与网页读取](docs/web-tools.md)：Python Harness 自主检索公开来源、读取正文并引用链接，无需启动 Computer。
 - [MCP 远程工具](docs/mcp.md)：只读工具发现、Agent 绑定、执行审计和本地演示。
 - [Skill 与广场安装](docs/skills.md)：内置技能、HTTP Hub、版本安装与按需读取。
 - [本地身份与权限](docs/identity.md)：空间成员、可撤销令牌、资源共享和双用户调试。
@@ -51,7 +53,7 @@ uv run --locked --offline ruff format --check .
 uv run --locked --offline pytest
 ```
 
-上述命令不启动服务。默认模型模式为 `mock`；已实现可配置的 Chat Completions 路由适配器、多轮工具调用、可选流式回复及用量事件，通过模拟 HTTP 响应验证，真实企业路由仍待联调。已增加本地用户、空间角色、可撤销访问令牌和显式共享；默认仍为开发模式，多用户配置见 [本地身份与权限](docs/identity.md)。已增加 Rakazo 核心聊天的 oRPC 兼容入口、原版邮箱密码登录与浏览器会话。Rakazo 源码保持原版，适配与黑盒测试均放在 AgentForge。保存设置用于下一次 RPC 运行，清空同时取消当前任务，历史 Run 快照保留；需显式升级数据库至 `0016` 并由管理员配置 Web 登录。原版模型目录、用户默认模型和 Bot 模型选择已接通；DeepSeek 官方接口适配普通模式，已在临时 SQLite 库通过真实两轮聊天与工具回传验收。原版 Skill 目录、个人技能新建编辑删除及聊天显式选择已接通，内容按任务固定版本。完整产品功能、企业单点登录、长期记忆仍待接入，未实现接口返回明确错误。接入步骤见 [原版 Rakazo Web](docs/rakazo-web.md)。
+上述命令不启动服务。默认模型模式为 `mock`；已实现可配置的 Chat Completions 路由适配器、多轮工具调用、可选流式回复及用量事件，通过模拟 HTTP 响应验证，真实企业路由仍待联调。已增加本地用户、空间角色、可撤销访问令牌和显式共享；默认仍为开发模式，多用户配置见 [本地身份与权限](docs/identity.md)。已增加 Rakazo 核心聊天的 oRPC 兼容入口、原版邮箱密码登录与浏览器会话。Rakazo 源码保持原版，适配与黑盒测试均放在 AgentForge。保存设置用于下一次 RPC 运行，清空同时取消当前任务，历史 Run 快照保留；需显式升级数据库至 `0017` 并由管理员配置 Web 登录。原版模型目录、用户默认模型和 Bot 模型选择已接通；DeepSeek 官方接口适配普通模式，已在临时 SQLite 库通过真实两轮聊天与工具回传验收。原版 Skill 目录、个人技能新建编辑删除及聊天显式选择已接通，内容按任务固定版本。完整产品功能、企业单点登录、长期记忆仍待接入，未实现接口返回明确错误。接入步骤见 [原版 Rakazo Web](docs/rakazo-web.md)。
 
 ## 项目目标
 
@@ -237,3 +239,6 @@ AgentForge 采用 [MIT License](LICENSE)。
 ## MCP 远程工具接入
 
 Python Harness 已支持通过官方 MCP Python SDK 调用配置好的远程 Streamable HTTP 只读工具；默认关闭，不引入 Node.js。部署配置授予服务访问范围，Agent 绑定具体工具和定义摘要，Worker 调用前复核，并复用现有权限、工具记录和结果回传链路。原版 Rakazo 聊天可以使用已在 REST 接口绑定的工具；MCP 配置页面、写操作审批、OAuth 和本地 stdio 尚未实现。配置、演示服务及完整验证步骤见 [MCP 说明](docs/mcp.md)。
+
+
+可选的 [Python 自动文件生成](docs/python-execution.md) 支持 Harness 自动读取 PPT Skill、在独立离线容器运行代码并返回可编辑 PPT 附件。默认关闭，需为实际用户配置授权及执行镜像。

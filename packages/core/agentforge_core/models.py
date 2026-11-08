@@ -17,6 +17,11 @@ TERMINAL_STATUSES = {RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED}
 
 
 class RunErrorCode(StrEnum):
+    WEB_NOT_ALLOWED = "web_not_allowed"
+    WEB_UNAVAILABLE = "web_unavailable"
+    WEB_TIMEOUT = "web_timeout"
+    WEB_CONTENT_UNSUPPORTED = "web_content_unsupported"
+    WEB_LIMIT_EXCEEDED = "web_limit_exceeded"
     BROWSER_NOT_ALLOWED = "browser_not_allowed"
     BROWSER_UNAVAILABLE = "browser_unavailable"
     BROWSER_BUSY = "browser_busy"

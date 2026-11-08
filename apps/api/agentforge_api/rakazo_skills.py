@@ -1,5 +1,6 @@
 """Native skill CRUD and composer selection backed by versioned local assets."""
 
+import json
 import re
 
 from agentforge_contracts.rakazo import SkillTarget
@@ -56,6 +57,12 @@ def requested_name(text):
     return name
 
 
+class SkillDependenciesUnavailable(Exception):
+    def __init__(self, references):
+        # Only versioned tool identifiers from validated, visible recipes are exposed.
+        self.references = tuple(sorted(references))
+
+
 class SkillRpcAdapter:
     def __init__(self, skills, tool_allowlist):
         self.skills = skills
@@ -109,13 +116,66 @@ class SkillRpcAdapter:
         return {"ok": True}
 
     def prepare_run(self, scope, text, config, *, connection):
+        # Called after idempotency and scoped model/browser/web grants, inside the send
+        # transaction. The Worker never consults a mutable catalog or the Hub.
+        entries = self.skills.catalog(scope, connection=connection)
         name = requested_name(text)
-        if name is None:
-            return config
-        selected, _, _ = find_by_name(self.skills.catalog(scope, connection=connection), name)
-        # Selection can narrow a task's guidance, never expand the assistant's tool grants.
-        BUILTIN_TOOLS.select(config.tools, self.tool_allowlist)
-        bound = (selected,) + tuple(s for s in config.skills if s.reference != selected.reference)
+        if name is not None:
+            selected, _, _ = find_by_name(entries, name)
+            missing = set(selected.manifest.required_tools) - set(config.tool_references)
+            missing.update(
+                set(selected.manifest.required_tools) & set(config.tools) - set(self.tool_allowlist)
+            )
+            if missing:
+                raise SkillDependenciesUnavailable(missing)
+            BUILTIN_TOOLS.select(config.tools, self.tool_allowlist)
+            bound = (selected,) + tuple(
+                s for s in config.skills if s.reference != selected.reference
+            )
+            config = ExecutionSnapshot.model_validate(
+                {**config.model_dump(), "skills": bound, "requested_skill": selected.reference}
+            )
+        # Discover only executable recipes, with pinned bindings taking precedence over
+        # newer catalog versions. Selection never expands an Agent/deployment tool grant.
+        refs = set(config.tool_references) - (set(config.tools) - set(self.tool_allowlist))
+        seen = {(s.source_id, s.manifest.skill_id) for s in config.skills}
+        discovered = []
+        omitted = 0
+        content_size = sum(len(s.manifest.content) for s in config.skills)
+        metadata_size = 0
+        budget = min(8000, config.model.context_max_chars // 8)
+        if config.model.context_max_bytes is not None:
+            budget = min(budget, config.model.context_max_bytes // 8)
+        # Personal recipes first, then builtins, then installed Hub recipes; newest per
+        # identity. Explicit /selection is resolved above against the complete catalog.
+        candidates = sorted(
+            entries,
+            key=lambda e: (
+                {"user": 0, "builtin": 1, "hub": 2}[e[0].source],
+                -e[0].manifest.version,
+                e[0].reference,
+            ),
+        )
+        for skill, _, _ in candidates:
+            identity = (skill.source_id, skill.manifest.skill_id)
+            if identity in seen or not set(skill.manifest.required_tools) <= refs:
+                continue
+            seen.add(identity)
+            size = len(json.dumps(skill.catalog_entry(), ensure_ascii=False).encode()) + 2
+            if (
+                len(discovered) >= 32
+                or content_size + len(skill.manifest.content) > 128000
+                or metadata_size + size > budget
+            ):
+                omitted += 1
+                continue
+            discovered.append(skill)
+            metadata_size += size
+            content_size += len(skill.manifest.content)
         return ExecutionSnapshot.model_validate(
-            {**config.model_dump(), "skills": bound, "requested_skill": selected.reference}
+            {
+                **config.model_dump(),
+                "catalog_skills": discovered,
+                "catalog_omitted": omitted,
+            }
         )

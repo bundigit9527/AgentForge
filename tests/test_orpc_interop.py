@@ -48,6 +48,7 @@ def run_bridge(
     worker=None,
     stream_control=None,
     approval_mode=False,
+    model_management=False,
 ):
     configured = os.environ.get("AGENTFORGE_RAKAZO_ROOT")
     if not configured:
@@ -120,6 +121,7 @@ def run_bridge(
             **({"AGENTFORGE_MODEL_INTEROP": "1"} if model_chat else {}),
             **({"AGENTFORGE_STREAM_INTEROP": "1"} if stream_control else {}),
             **({"AGENTFORGE_APPROVAL_INTEROP": "1"} if approval_mode else {}),
+            **({"AGENTFORGE_MODEL_MANAGEMENT_INTEROP": "1"} if model_management else {}),
         },
     ) as process:
         complete = False

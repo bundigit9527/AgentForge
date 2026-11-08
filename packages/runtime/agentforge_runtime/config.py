@@ -15,6 +15,10 @@ class ModelSettings:
     model: str = ""
     allowed_models: tuple[str, ...] = ()
     api_style: str = "openai"
+    connection_id: str | None = None
+    connection_revision: int | None = None
+    catalog_provider: str | None = None
+    context_max_bytes: int | None = None
     stream: bool = False
     context_policy: str = "trim_history"
     context_max_chars: int = 100000
@@ -30,7 +34,7 @@ class ModelSettings:
             raise ValueError("AGENTFORGE_MODEL_CONTEXT_MAX_CHARS must be between 4000 and 200000")
         if type(self.stream) is not bool:
             raise ValueError("AGENTFORGE_MODEL_STREAM must be true or false")
-        if self.api_style not in {"openai", "deepseek"}:
+        if self.api_style not in {"openai", "deepseek", "compatible"}:
             raise ValueError("AGENTFORGE_MODEL_API_STYLE must be openai or deepseek")
         if self.provider == "mock" and self.api_style != "openai":
             raise ValueError("Mock models cannot select a remote API style")
@@ -55,9 +59,8 @@ class ModelSettings:
             raise ValueError("AGENTFORGE_MODEL_TIMEOUT_SECONDS must be in (0, 120]")
         if type(self.max_rounds) is not int or not 1 <= self.max_rounds <= 32:
             raise ValueError("AGENTFORGE_MODEL_MAX_ROUNDS must be between 1 and 32")
-        if (
-            type(self.max_completion_tokens) is not int
-            or not 1 <= self.max_completion_tokens <= 8192
+        if type(self.max_completion_tokens) is not int or not 1 <= self.max_completion_tokens <= (
+            131072 if self.connection_id else 8192
         ):
             raise ValueError("AGENTFORGE_MODEL_MAX_COMPLETION_TOKENS must be between 1 and 8192")
         if self.provider == "chat_completions":
@@ -80,8 +83,10 @@ class ModelSettings:
                     "AGENTFORGE_MODEL_BASE_URL must be an HTTP(S) base URL "
                     "without credentials or query"
                 )
-            if self.require_credentials and (
-                not self.api_key.strip() or any(char.isspace() for char in self.api_key)
+            if (
+                self.require_credentials
+                and not (self.catalog_provider == "openai-compatible" and self.api_key == "")
+                and (not self.api_key.strip() or any(char.isspace() for char in self.api_key))
             ):
                 raise ValueError("AGENTFORGE_MODEL_API_KEY must be a token without whitespace")
             if (
@@ -144,6 +149,10 @@ class ModelSettings:
 
     def snapshot(self) -> ModelConfig:
         return ModelConfig(
+            connection_id=self.connection_id,
+            connection_revision=self.connection_revision,
+            catalog_provider=self.catalog_provider,
+            context_max_bytes=self.context_max_bytes,
             provider=self.provider,
             api_style=self.api_style,
             stream=self.stream if self.provider == "chat_completions" else False,
@@ -169,6 +178,11 @@ class ModelSettings:
                 max_rounds=snapshot.max_rounds,
                 max_completion_tokens=snapshot.max_completion_tokens,
             )
+        if (self.connection_id, self.connection_revision) != (
+            snapshot.connection_id,
+            snapshot.connection_revision,
+        ):
+            raise ValueError("Worker credential revision does not match this run")
         if self.provider != snapshot.provider or (
             self.snapshot().route_fingerprint != snapshot.route_fingerprint
         ):
@@ -180,6 +194,7 @@ class ModelSettings:
             stream=snapshot.stream,
             context_policy=snapshot.context_policy,
             context_max_chars=snapshot.context_max_chars,
+            context_max_bytes=snapshot.context_max_bytes,
             timeout_seconds=snapshot.timeout_seconds,
             max_rounds=snapshot.max_rounds,
             max_completion_tokens=snapshot.max_completion_tokens,

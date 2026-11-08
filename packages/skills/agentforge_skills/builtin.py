@@ -40,6 +40,30 @@ _RECIPES = (
             "验收：数值来自工具，明确片段数不等于中文词数或模型 token 数。"
         ),
     ),
+    SkillManifest(
+        skill_id="presentation",
+        version=1,
+        name="PPT生成",
+        description="根据资料或当前对话自动生成可编辑 PowerPoint 文件并返回下载附件。",
+        required_tools=("python_execute@1",),
+        content=(
+            "# PPT生成\n"
+            "结合本轮要求和已有对话选取内容。主题明确时直接执行，默认中文、16:9、6至8页；"
+            "只有完全缺少主题或必要资料时才询问，不重复索要已有材料。\n"
+            "调用 python_execute，使用已安装的 python-pptx（from pptx import Presentation），"
+            "在 /workspace 写入 .pptx 并在 exports 声明文件名。无需安装依赖。"
+            "使用可编辑文本框、形状、表格；正文22至28pt，标题30至36pt，浅底深字，"
+            "保持页边距，拆分过密内容。默认包括封面、主要内容、结论和已有来源。"
+            "不编造数据、日期或来源；生成最新资讯前先调用已授权联网工具。\n"
+            "从 pptx.util 导入 Inches、Pt；使用 Inches(13.333)、Inches(7.5) 设置画布。"
+            "避免将英文长段或中文密集内容塞入固定文本框。"
+            "保存后用 Presentation(文件名) 再次打开，检查页数、非空标题和形状边界，"
+            "print 简短检查结果。遇到 exit_code 非零，根据 stderr 修正后重新执行；"
+            "每次执行是空目录，须重新生成完整文件。\n"
+            "仅在工具返回成功且 files 包含产物时告知已生成。附件自动出现在聊天中，"
+            "不要提供虚构本地下载路径。结构检查不等于视觉检查，未渲染时不得声称已逐页审图。"
+        ),
+    ),
 )
 
 BUILTIN_SKILLS = tuple(

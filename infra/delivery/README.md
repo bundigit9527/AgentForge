@@ -80,3 +80,6 @@ Compose 将名为 `workspace_checkpoints` 的持久卷挂到 Supervisor 的 `/ch
 ## 可选公开网页浏览器
 
 配置 `config/browser.json` 中的显式身份授权，在 `.env.backend` 设置 `AGENTFORGE_BROWSER_POLICY_FILE=/etc/agentforge/browser.json`，在 `.env` 单独生成并填写 `AGENTFORGE_BROWSER_TOKEN`。Compose 将该令牌和内部 API 地址传入 API、Worker、Supervisor，不传给 Web 或 Computer。配置和验收步骤见 [可见浏览器](../../docs/visible-browser.md)。功能默认关闭；启用后新建真实模型 Run 可自动启动所属电脑并打开公开 HTML 网页。原版 Rakazo Web 不需要改动。
+
+
+可选 PPT / Python 文件生成沿用 `compute` 服务，额外交付执行镜像并配置明确的用户授权；详见 [Python 自动文件生成](../../docs/python-execution.md)。桌面镜像与 Python 执行镜像是两个独立环境，文件生成不会在可见桌面内运行。

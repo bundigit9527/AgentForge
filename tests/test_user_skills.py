@@ -167,7 +167,7 @@ def test_invalid_yaml_is_rejected_without_echoing_document(client, headers, cont
     response = rpc(client, headers, "agentSkills.create", {"content": content})
     assert response.status_code == 422
     assert "private-secret" not in response.text
-    assert len(catalog(client, headers)) == 3
+    assert len(catalog(client, headers)) == 4
 
 
 @pytest.mark.parametrize(
@@ -186,7 +186,7 @@ def test_invalid_yaml_is_rejected_without_echoing_document(client, headers, cont
 )
 def test_invalid_structured_inputs_do_not_create_assets(client, headers, fields):
     assert rpc(client, headers, "agentSkills.create", fields).status_code == 422
-    assert len(catalog(client, headers)) == 3
+    assert len(catalog(client, headers)) == 4
 
 
 def test_duplicate_and_reserved_names_are_rejected_atomically(client, headers, engine):
@@ -366,8 +366,10 @@ def test_user_skill_metadata_never_grants_tools(client, headers, repository, sco
             "Use only authorized tools"
         ),
     )
-    bot = create_bot(client, headers)
-    assert send(client, headers, bot["id"], "/" + item["name"]).status_code == 422
+    restricted = client.post(
+        "/api/v1/agents", headers=headers, json={"name": "Restricted", "tools": []}
+    ).json()
+    assert send(client, headers, restricted["agent_id"], "/" + item["name"]).status_code == 422
     agent = client.post(
         "/api/v1/agents", headers=headers, json={"name": "Stats", "tools": ["text_stats@1"]}
     ).json()

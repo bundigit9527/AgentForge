@@ -323,7 +323,10 @@ def test_worker_persists_private_trim_audit_without_rewriting_history(
 
 
 @pytest.mark.parametrize("reason", ["cancel", "expired", "revoked"])
-def test_trim_event_obeys_current_execution_ownership(repository, scope, clock, people, reason):
+@pytest.mark.parametrize("byte_only", [False, True])
+def test_trim_event_obeys_current_execution_ownership(
+    repository, scope, clock, people, reason, byte_only
+):
     from agentforge_storage.repository import RunRepository
 
     store, members, _ = people
@@ -347,11 +350,14 @@ def test_trim_event_obeys_current_execution_ownership(repository, scope, clock, 
     assert not repo.record_context(
         claim,
         step=1,
-        budget_chars=4000,
+        budget_chars=100000 if byte_only else 4000,
         before_chars=6000,
         after_chars=3000,
         dropped_turns=1,
         retained_turns=1,
+        **(
+            {"budget_bytes": 10000, "before_bytes": 18000, "after_bytes": 9000} if byte_only else {}
+        ),
     )
     assert not any(e.event_type == "context_trimmed" for e in repo.list_events(owner, run.run_id))
 
@@ -423,3 +429,68 @@ def test_explicit_skill_catalog_and_reader_survive_history_trimming():
     assert requests[1]["messages"][-1]["role"] == "tool"
     assert skill.manifest.content in json.loads(requests[1]["messages"][-1]["content"])["content"]
     assert all(context_size(body["messages"], body["tools"]) <= 4000 for body in requests)
+
+
+def test_worker_byte_only_overflow_records_trim_and_completes(repository, scope):
+    gateway = model_settings(context_max_chars=100000, context_max_bytes=9000)
+    conversations, thread = seeded_thread(repository, scope, gateway)
+    run = repository.create(scope, "请整理资料", thread_id=thread["thread_id"])
+    original = run.context
+    requests = []
+    with configured_harness(
+        gateway,
+        transport=httpx.MockTransport(
+            lambda req: (
+                requests.append(json.loads(req.content))
+                or httpx.Response(200, json=completion("已整理"))
+            )
+        ),
+    ) as harness:
+        assert Worker(repository, harness).run_once()
+    final = repository.get(scope, run.run_id)
+    assert final.status == RunStatus.SUCCEEDED
+    assert final.context == original and final.execution_config == run.execution_config
+    trim = next(
+        e.data
+        for e in repository.list_events(scope, run.run_id)
+        if e.event_type == "context_trimmed"
+    )
+    assert trim["before_chars"] < trim["budget_chars"]
+    assert trim["before_bytes"] > trim["budget_bytes"] >= trim["after_bytes"]
+    assert len(requests) == 1
+    assert "private-old" not in json.dumps(trim)
+    assert len(conversations.list_messages(scope, thread["thread_id"])) == 4
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"budget_bytes": 1023},
+        {"before_bytes": None},
+        {"after_bytes": 10001},
+        {"before_bytes": True},
+        {"after_bytes": -1},
+        {"before_bytes": 9000},
+        {"before_chars": "6000"},
+        {"after_chars": 100001},
+    ],
+)
+def test_invalid_byte_trim_statistics_do_not_create_events(repository, scope, change):
+    run = repository.create(scope, "task")
+    claim = repository.claim_next()
+    stats = dict(
+        step=1,
+        budget_chars=100000,
+        before_chars=6000,
+        after_chars=3000,
+        dropped_turns=1,
+        retained_turns=1,
+        budget_bytes=10000,
+        before_bytes=18000,
+        after_bytes=9000,
+    )
+    with pytest.raises(ValueError):
+        repository.record_context(claim, **{**stats, **change})
+    assert not any(
+        e.event_type == "context_trimmed" for e in repository.list_events(scope, run.run_id)
+    )

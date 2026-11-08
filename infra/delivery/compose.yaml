@@ -96,6 +96,7 @@ services:
         required: false
     environment:
       AGENTFORGE_COMPUTER_IMAGE: ${AGENTFORGE_COMPUTER_IMAGE}
+      AGENTFORGE_PYTHON_IMAGE: ${AGENTFORGE_PYTHON_IMAGE:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
 

@@ -14,3 +14,23 @@ AGENTFORGE_REGISTRATION_ENABLED=false
 
 # Optional public browser grants; see docs/visible-browser.md.
 # AGENTFORGE_BROWSER_POLICY_FILE=/etc/agentforge/browser.json
+
+# Anonymous web tools, independent of Computer; see docs/web-tools.md.
+AGENTFORGE_WEB_ENABLED=false
+AGENTFORGE_WEB_SEARCH_PROVIDER=duckduckgo
+# Empty reuses BROWSER_POLICY_FILE; this separate file needs no browser token or desktop.
+AGENTFORGE_WEB_POLICY_FILE=
+AGENTFORGE_WEB_PROXY_URL=
+
+# Personal model management: same random 32-byte base64 key on API and Worker only.
+# Generate once, keep separately with backups; never commit the actual value.
+# See docs/model-management.md. Empty disables saving personal credentials.
+AGENTFORGE_MODEL_ENCRYPTION_KEY=
+# Explicit internal model gateway origins, if needed; otherwise public HTTPS only.
+AGENTFORGE_MODEL_ALLOWED_ORIGINS=[]
+
+# Optional isolated Python/file generation. Explicit user grants; see docs/python-execution.md.
+AGENTFORGE_PYTHON_POLICY_FILE=
+AGENTFORGE_PYTHON_IMAGE=
+AGENTFORGE_PYTHON_ENDPOINT=http://127.0.0.1:8766
+# API/Worker and compute share AGENTFORGE_MCP_COMPUTER_TOKEN; never forward it to Computer/Web.

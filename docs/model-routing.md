@@ -62,20 +62,13 @@ uv run --env-file .env --locked agentforge-worker --once
 
 持续运行仍使用 `--watch`。默认配置在进程启动时读取，修改后重启对应 API / Worker。实际执行使用 Run 快照；不同默认模型的 Worker 只要配置同一路由，即可按快照执行，路由不匹配时失败。当前尚未按路由筛选队列，应为共享队列配置一致的路由。
 
-直接构造 `Worker(repository)` 只服务模拟快照，遇到真实路由快照会失败。生产入口按任务调用 `configured_harness(settings.for_snapshot(snapshot.model))`；该上下文管理器负责关闭客户端。测试可注入与快照模型配置一致的 Harness。
+直接构造 `Worker(repository)` 只服务模拟快照，遇到真实路由快照会失败。生产入口对托管单路由调用 `configured_harness(settings.for_snapshot(snapshot.model))`，个人／备用路由使用 `managed_harness` 包装同一个 ChatHarness；该上下文管理器负责关闭客户端。测试可注入与快照模型配置一致的 Harness。
 
 ## 原版 Web 的模型选择
 
-`models.list` 返回部署配置的默认模型及 `AGENTFORGE_MODEL_ALLOWED_MODELS` 中的额外模型（逗号分隔、总计最多 100 个）。全部模型使用同一个服务端地址和 Worker 密钥，不允许页面指定任意地址。模拟模式仍返回空目录。
+原版页面已支持个人 DeepSeek / OpenAI Compatible 连接、模型发现、默认选择、Bot 选择、断开和有序备用。服务端托管路由仍保留。启用、迁移、密钥保管、运行快照及当前边界见 [模型管理](model-management.md)。
 
-`models.credentials` 返回服务端托管路由的元数据，不返回密钥或地址；`hasKey=false` 表示 API 没有保存个人密钥，不能据此判断 Worker 的密钥或服务是否有效。目录可见不代表已经连通模型。
-
-- 原版“模型设置”调用 `models.setDefault`，按租户、空间、用户保存选择；需要成员写权限。新建 Bot 使用该默认值，已有 Bot 保留明确绑定的模型。
-- Bot 设置可在目录中选择模型，或者选择默认值；后者在保存时绑定当时的用户默认模型。模型变化创建新 Agent 版本，下一次 RPC 聊天生效，已提交 Run 和重试不变。
-- 删除目录项会禁止新的选择；旧 Agent / Run 的快照仍可在同一路由执行。这不是模型权限撤销机制；如需停止旧任务，应取消任务或撤销访问权限。
-- 默认模型偏好对应的路由变化、模型不再在目录时，使用部署默认模型。不会修改历史任务。
-- `models.connect/disconnect`、OAuth、探测、备选模型、个人凭据和思考档位管理仍返回明确错误，原版入口保留。密钥由管理员在 Worker 配置。
-- 迁移 `0011` 新增 `rpc_model_preferences`，不改写聊天数据。降级会删除用户模型偏好，不影响已固定的 Agent / Run 配置。
+托管目录来自 `AGENTFORGE_MODEL_ALLOWED_MODELS`，共用管理员地址与 Worker 密钥；个人连接按用户加密保存。目录可见不代表已连通，个人连接必须通过保存前测试。RPC 新运行绑定当前连接 revision；旧任务不随设置变化。REST 会话继续固定创建时版本。
 
 ## DeepSeek V4 Pro 官方接口
 
@@ -124,7 +117,7 @@ AGENTFORGE_MODEL_MAX_COMPLETION_TOKENS=2048
 }
 ```
 
-事件沿用现有单调游标和 SSE 续传机制，不保存上游响应原文、请求头或密钥。`model` 使用 Run 快照中的模型名称；上游未返回用量时保存 `usage: null`，不把未知用量当作零。可以按执行尝试和轮次汇总已记录的用量，但这不是完整计费账本：超时、取消、无效响应或进程中断可能已经产生上游费用而未能记录。
+事件沿用现有单调游标和 SSE 续传机制，不保存上游响应原文、请求头或密钥。`model` 使用本轮实际成功响应的模型名称（包括备用）；上游未返回用量时保存 `usage: null`，不把未知用量当作零。可以按执行尝试和轮次汇总已记录的用量，但这不是完整计费账本：超时、取消、无效响应或进程中断可能已经产生上游费用而未能记录。
 
 | `error_code` | 含义 |
 | --- | --- |

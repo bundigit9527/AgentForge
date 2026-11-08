@@ -94,7 +94,7 @@ def test_native_models_catalog_default_and_bot_selection(settings, repository, h
             ).status_code
             == 422
         )
-        assert rpc(client, headers, "models.connect", {"apiKey": "not-accepted"}).status_code == 501
+        assert rpc(client, headers, "models.connect", {"apiKey": "not-accepted"}).status_code == 422
     # Recreating the API preserves the preference; no in-memory process default.
     with TestClient(create_app(settings, repository, model_settings=gateway)) as client:
         assert rpc(client, headers, "me").json()["json"]["defaultModel"] == "test-second-model"

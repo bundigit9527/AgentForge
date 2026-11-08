@@ -1,8 +1,12 @@
 # 与 Rakazo 对齐的架构基线
 
-核查日期为 2026-11-06。比较对象为本地 Rakazo 原版 `d165de43` 与 AgentForge 迁移 `0016` 对应的实现。Rakazo 一侧按源码核对，AgentForge 一侧区分了本机联调、自动化回归和待验收能力。
+核查日期为 2026-11-08。比较对象为本地 Rakazo 原版 `d165de43` 与 AgentForge 迁移 `0017` 对应的实现。Rakazo 一侧按源码核对，AgentForge 一侧区分了本机联调、自动化回归和待验收能力。
 
-本次 P0 收口、真实 Web / 模型 / 桌面验收和配置说明见 [P0 记录](p0-acceptance.md)。当前通过 SQLite 638 项、PostgreSQL 643 项回归；这些结果不代表 Ubuntu 生产验收。
+P0 收口、真实 Web / 模型 / 桌面验收和配置说明见 [P0 记录](p0-acceptance.md)。本轮联网工具回归通过 SQLite 704 项（12 项跳过）和 PostgreSQL 716 项（包含原版客户端互操作）；真实 DeepSeek 搜索与读取验收见 [联网工具](web-tools.md)。这些结果不代表 Ubuntu 生产验收。
+
+本次 Skill 增量通过独立 PostgreSQL 全套 730 项（包含原版客户端互操作）。SQLite 全套 717 项通过、12 项跳过，随后补充的审批恢复用例亦通过。普通与显式选择两种真实个人 DeepSeek 技能读取验收通过；详见 [Skill 说明](skills.md)。
+
+上下文差异：本地 Rakazo 默认 `retrieval` 策略，提供历史回查、按模型窗口保留内容及有界缩减旧工具结果，另有后台摘要路径；AgentForge 目前保留完整轮次裁剪。中文联网任务的字节预算与裁剪审计校验不一致已修复，详见 [上下文管理](context-management.md)。
 
 ## 本轮代码核查：对齐情况与实际差距
 
@@ -10,12 +14,14 @@
 | --- | --- | --- |
 | Web 与身份 | React 客户端通过 Better Auth 和 oRPC 访问服务 | 原版 Web 可按部署开关注册、登录、改密并撤销其他浏览器会话、选模型、多轮聊天、接收 SSE 和回答审批。FastAPI 在后端兼容协议，保留 REST。本地账号、角色和空间授权已实现，SSO 和部分管理接口仍待接入。 |
 | 运行与模型 | Graphile Worker 调度任务，Pi 负责 Agent 循环、上下文和工具 | Python Worker 使用数据库队列和租约，Python Harness 调用 Chat Completions。已联调 DeepSeek，支持版本快照、文本流和完整轮次裁剪。缺少 Pi 式语义压缩与独立业务 Task，RPC 的 taskId 为兼容标识。 |
-| Skill 与 MCP | 内置及用户 Skill、MCP 连接和工具管理 | 内置 Skill、HTTP Hub 安装、个人 Skill CRUD 和运行时按版本读取已接通。远程 MCP 工具需由部署方登记并限制作用域，原版广场管理和示教录制仍有缺口。 |
+| 模型管理 | 个人供应商连接、探测、默认、备用与 OAuth | 已接通 DeepSeek / OpenAI Compatible 的个人加密凭据、探测、默认、Bot 选择、断开和实际备用执行。OAuth、图片、思考与其他原生协议待实现。[说明](model-management.md) |
+| Skill 与 MCP | 内置及用户 Skill、MCP 连接和工具管理 | 内置 Skill、HTTP Hub 安装、个人 Skill CRUD、普通聊天目录发现及显式技能先读取已接通。目录和正文按 Run 固定版本，依赖不授予权限。远程 MCP 工具需由部署方登记并限制作用域，原版广场管理和示教录制仍有缺口。 |
 | 审批与恢复 | ExternalEffect、审批卡片和回答后恢复执行 | Python Harness 保存工具参数与检查点，审批后恢复同一次操作。已确认结果可复用，已发出但结果未知的操作停止自动重发。通用外部业务写入仍待接入。 |
 | Docker 交付 | 生产 Compose 可选 Docker 沙箱覆盖配置，由 Supervisor 操作 Docker Engine | 原版 Web、FastAPI、Worker、Supervisor 分开运行，对接外部 PostgreSQL。API 与 Worker 没有 Docker socket。已验证单机 Colima 部署，目标 Ubuntu 环境待验收。 |
 | Computer 分配 | Team 按空间复用，Private 按 Bot 独占。常规 Run 在进入 Pi 前调用 provisionComputer | Team 按租户和空间复用，Private 按 Bot 分配。新 Bot 默认 Team，迁移 0015 将已有 Bot 保留为 Private。普通聊天无需启动桌面，点击启动时才分配或复用容器。 |
 | 桌面生命周期与文件 | 默认空闲阈值为十分钟，满足条件后保存工作区并挂起。提供终端及文件接口 | 可观看、接管和交还。Files 可列目录、预览、下载，持有控制权才可上传。Team 的 Files 默认进入各 Bot 目录，但桌面和终端共享。Compose 桌面池在正常停止时归档 /workspace，启动时按原作用域恢复；单次桌面最长四小时。独立 Terminal 可在接管期间使用交互 Shell，与 Files 使用同一 Bot 目录。Compose 支持按空闲时间挂起，停机可列目录及预览文本；跨主机恢复仍待现场验收。 |
 | Activity 与执行记录 | 原版 runs.list、工具步骤及会话事件回放 | 已接通当前用户的活动列表和最近 20 条记录；成功工具保存次数与耗时，失败／中断明确提示，刷新可恢复。尚未实现独立业务 Task 和 Routine。 |
+| 联网搜索与抓取 | 内置 web_search / web_fetch，默认 DuckDuckGo，无需 Computer | Python Worker 已接入同名工具和统一审计；支持 DuckDuckGo 与 Bing RSS，按用户授权访问公开 HTTPS，来源正文为不可信资料。默认关闭；本机已用 Bing RSS + DeepSeek 验收。无 HTTP 明文、登录、JavaScript、PDF 或实时行情专用数据源。 |
 | 浏览器 | 通用浏览器工具提供导航、观察和页面操作 | 新增 Python browser_open / browser_observe / browser_follow，按 Run 授权驱动所属 Computer 的可见 Chromium。支持公网 HTTPS 或指定来源的匿名 HTML 分段读取、查找、滚动和链接点击；无 JavaScript、表单输入与登录态复用，尚未达到 Rakazo 的完整浏览器能力。固定财经工具保留。 |
 | 产物与记忆 | 文件产物、版本和 MemoryProvider | 经审批的 CSV 可持久化，在聊天中显示文件卡片，并可由所有者下载。Bot 聊天支持上传、仅附件发送、本轮按授权读取及生成文本结果文件。每个文件目前为独立版本；同名文件版本管理、长期记忆与企业知识检索待实现。 |
 
@@ -39,7 +45,7 @@ Rakazo 对照入口为 `apps/api/src/router.ts`、`apps/worker/src/index.ts` 和
 - 当前 `taskId` 是 Run 的稳定兼容标识，不能据此宣称已有独立 Task；RPC 会话按用户隔离，提交时采用最新 Agent 设置；每个 Run 固定版本，REST 会话仍按创建时版本运行。
 - Python 技术栈；首版数据库任务表兼任队列，不为复刻 Graphile 引入另一套组件。
 - Agent 和运行配置固定版本；Hub 安装固定来源、版本和内容摘要。升级技能需要新 Agent 版本，旧 Run 和 REST 会话不静默变更；原版 RPC 下一次提交使用最新 Agent 配置。
-- Agent 可显式绑定技能，原版 Web 也可通过用户可见目录和 `/技能名` 为单次 Run 选择技能。个人技能创建 / 编辑 / 删除已接通；Hub 管理页面和录制示教体验未覆盖；选择不自动授予工具权限。
+- Agent 可显式绑定技能；原版 Web 普通消息发现可执行技能目录，`/技能名` 为单次 Run 选择技能并强制首轮准确读取。个人技能创建 / 编辑 / 删除已接通；Hub 管理页面和录制示教体验未覆盖；选择不自动授予工具权限。
 - 个人技能支持受限的 SKILL.md YAML 导入、编辑和删除，保留未知元数据为普通数据。Hub 与内置版本保持只读；资源包、可执行资源及模型侧 skill_create / skill_update / skill_delete 工具未实现。
 - 不复制 Rakazo 的所有产品模块；移动端、语音、外部聊天渠道等未列为当前交付范围。
 
@@ -103,3 +109,8 @@ threads.answer。支持允许本次／始终允许／拒绝、刷新恢复、重
 原版规则管理页、自动审核和外部写连接器尚未实现。详见 [审批说明](external-effects.md)。
 
 Docker 交付采用外部 PostgreSQL、独立 API / Worker 和持有 Docker socket 的 Supervisor。原版 Web 可通过 bots.setComputer 切换模式，范围与验证步骤见 [交付指南](../infra/delivery/README.md)。
+
+
+## Python 文件生成补充（2026-11-08）
+
+新增独立 Python 执行容器、PPT生成 Skill、二进制附件原子交付，继续使用原有 Python Harness 和原版 Rakazo Web。默认关闭并按用户授权；旧 Run 保持不变。脚本执行每次使用空目录，尚不复用 Team/Private 桌面文件或运行通用 Shell。配置、验收及 Rakazo 逐项差异见 [Python 自动文件生成](python-execution.md)。

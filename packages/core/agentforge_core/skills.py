@@ -71,6 +71,15 @@ class SkillSnapshot(BaseModel):
     manifest: SkillManifest
     sha256: Digest
 
+    def catalog_entry(self):
+        return {
+            "reference": self.reference,
+            "name": self.manifest.name,
+            "version": self.manifest.version,
+            "description": self.manifest.description,
+            "required_tools": list(self.manifest.required_tools),
+        }
+
     @model_validator(mode="after")
     def consistent(self):
         builtin = self.source == "builtin"

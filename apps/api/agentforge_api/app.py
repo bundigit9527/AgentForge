@@ -6,6 +6,7 @@ from uuid import UUID
 from agentforge_connectors.mcp import McpService
 from agentforge_connectors.mcp_config import McpSettings
 from agentforge_connectors.skill_hub import HttpSkillHub, SkillHubSettings
+from agentforge_connectors.web import prepare_web
 from agentforge_contracts.conversations import (
     AgentPage,
     AgentResponse,
@@ -250,6 +251,9 @@ def create_app(
                     "resource_shares",
                     "rpc_bot_profiles",
                     "rpc_model_preferences",
+                    "model_connections",
+                    "model_selections",
+                    "model_backups",
                     "rpc_thread_selections",
                     "thread_event_heads",
                     "thread_events",
@@ -502,6 +506,7 @@ def create_app(
                 body.prompt,
                 idempotency_key,
                 thread_id=str(body.thread_id) if body.thread_id else None,
+                _resolve_config=lambda connection, config: prepare_web(scope, config),
                 execution_config=ExecutionSnapshot(
                     authorization_mode=configuration.auth_mode,
                     model=model_configuration.snapshot(),
@@ -512,7 +517,7 @@ def create_app(
 
     @app.get("/api/v1/runs/{run_id}", response_model=RunResponse)
     def get_run(run_id: UUID, scope: ScopeDependency, repo: RepositoryDependency):
-        return RunResponse.from_run(repo.get(scope, str(run_id)))
+        return RunResponse.from_run(repo.get(scope, str(run_id)), viewer=scope)
 
     @app.post("/api/v1/runs/{run_id}/cancel", response_model=RunResponse)
     def cancel_run(run_id: UUID, scope: ScopeDependency, repo: RepositoryDependency):

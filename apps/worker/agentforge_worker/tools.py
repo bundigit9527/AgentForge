@@ -15,8 +15,10 @@ class RunToolJournal:
         except RunConflict:
             raise RuntimeFailure(RunErrorCode.TOOL_CALL_CONFLICT) from None
 
-    def complete(self, ticket: ToolTicket, output: dict, content: str) -> bool:
-        return self.repository.complete_tool(self.claim, ticket, output=output, content=content)
+    def complete(self, ticket: ToolTicket, output: dict, content: str, *, files=()) -> bool:
+        return self.repository.complete_tool(
+            self.claim, ticket, output=output, content=content, files=files
+        )
 
     def fail(self, ticket: ToolTicket, code: RunErrorCode) -> bool:
         return self.repository.complete_tool(self.claim, ticket, error_code=code)

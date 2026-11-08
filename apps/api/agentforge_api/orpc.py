@@ -6,6 +6,8 @@ import logging
 import time
 
 from agentforge_connectors.browser import BrowserPolicy
+from agentforge_connectors.model_manager import DEEPSEEK
+from agentforge_connectors.web import prepare_web
 from agentforge_contracts.rakazo import (
     AnswerApproval,
     ArtifactFamily,
@@ -23,6 +25,7 @@ from agentforge_contracts.rakazo import (
     ListDesktopFiles,
     ListRuns,
     ListSpaceArtifacts,
+    MeInput,
     ReleaseDesktop,
     RemoveSkill,
     SelectConversation,
@@ -42,22 +45,31 @@ from agentforge_core.identity import (
     AuthenticationUnavailable,
     PermissionDenied,
 )
+from agentforge_core.model_management import (
+    Choice,
+    ConnectModel,
+    DisconnectModel,
+    ModelManagementError,
+    ProbeCatalog,
+    ProbeModels,
+)
 from agentforge_core.models import RunConflict, RunNotFound
 from agentforge_core.skills import SkillDocumentError
 from agentforge_runtime.errors import RuntimeFailure
+from agentforge_runtime.tools import DEFAULT_TOOLS
 from agentforge_storage.approvals import ApprovalRepository
 from agentforge_storage.artifacts import ArtifactRepository
 from agentforge_storage.rakazo import RakazoRepository
 from fastapi import Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 from starlette.concurrency import run_in_threadpool
 
 from agentforge_api.browser_execution import mount_browser_execution
 from agentforge_api.desktop import DesktopFileInvalid, mount_desktop
 from agentforge_api.rakazo_models import ModelRpcAdapter
-from agentforge_api.rakazo_skills import SkillRpcAdapter
+from agentforge_api.rakazo_skills import SkillDependenciesUnavailable, SkillRpcAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +90,20 @@ class RpcError(Exception):
 
 
 def failure(exc):
+    if isinstance(exc, SkillDependenciesUnavailable):
+        return RpcError(
+            422,
+            "UNPROCESSABLE_CONTENT",
+            "所选技能缺少已授权工具："
+            + ", ".join(exc.references)
+            + "。请由管理员检查 Agent 工具配置和部署授权后重试；选择技能不会自动授权。",
+        )
+    if isinstance(exc, ModelManagementError):
+        return RpcError(
+            exc.status,
+            {503: "SERVICE_UNAVAILABLE", 403: "FORBIDDEN"}.get(exc.status, "UNPROCESSABLE_CONTENT"),
+            str(exc),
+        )
     if isinstance(exc, RpcError):
         return exc
     # Only these fixed lifecycle messages are safe to expose; all other conflicts
@@ -192,7 +218,7 @@ async def subscribe_events(
         await asyncio.sleep(poll_interval)
 
 
-async def read_input(request, limit=128000):
+async def read_input(request, limit=128000, *, allow_array=False):
     if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
         raise RpcError(415, "UNSUPPORTED_MEDIA_TYPE", "Expected application/json")
     body = bytearray()
@@ -213,7 +239,7 @@ async def read_input(request, limit=128000):
     value = obj.get("json", {})
     if value is None:
         value = {}
-    if not isinstance(value, dict):
+    if not isinstance(value, dict) and not (allow_array and isinstance(value, list)):
         raise RpcError(422, "UNPROCESSABLE_CONTENT", "Expected an object")
     return value
 
@@ -230,15 +256,26 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
     skill_adapter = SkillRpcAdapter(skills, tool_allowlist)
 
     def prepare_run(connection, scope, text, config):
-        config = skill_adapter.prepare_run(scope, text, config, connection=connection)
+        from agentforge_connectors.python_execution import prepare_python
+
+        config = model_adapter.manager.prepare_run(scope, config, connection)
         origins = (
             BrowserPolicy.from_env().origins(scope)
             if config.model.provider == "chat_completions"
             else ()
         )
-        return ExecutionSnapshot.model_validate(
-            {**config.model_dump(), "browser_origins": origins, "browser_reading": bool(origins)}
+        config = prepare_web(
+            scope,
+            ExecutionSnapshot.model_validate(
+                {
+                    **config.model_dump(),
+                    "browser_origins": origins,
+                    "browser_reading": bool(origins),
+                }
+            ),
         )
+        config = prepare_python(scope, config)
+        return skill_adapter.prepare_run(scope, text, config, connection=connection)
 
     def me(scope):
         user, _ = browser.profile(scope)
@@ -250,8 +287,8 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
             "name": user["name"],
             "spaceId": scope.space_id,
             "isDeploymentOwner": False,
-            "needsModel": False,
-            "defaultProvider": model.provider,
+            "needsModel": model_adapter.manager.enabled and model.provider == "mock",
+            "defaultProvider": model.catalog_provider or model.provider,
             "defaultModel": model.model,
             "hostCredentialProvider": None,
             "hostCredentialSource": None,
@@ -335,7 +372,9 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
             body = ListRuns.model_validate(data)
             return {"runs": service.activity(scope, body.filter)}
         if procedure == "me":
-            Empty.model_validate(data)
+            body = MeInput.model_validate(data)
+            if body.context and body.context.spaceId not in (None, scope.space_id):
+                raise RpcError(409, "CONFLICT", "Selected space changed; reopen Models and retry")
             return me(scope)
         if procedure in {"bootstrap", "spaces/list", "bots/list"}:
             body = (
@@ -374,10 +413,27 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
         if procedure in {"models/list", "models/credentials"}:
             Empty.model_validate(data)
             return (
-                model_adapter.catalog()
+                model_adapter.catalog(scope)
                 if procedure == "models/list"
                 else model_adapter.credentials(scope)
             )
+        if procedure == "models/connect":
+            return model_adapter.manager.connect(scope, ConnectModel.model_validate(data))
+        if procedure == "models/probeOpenAiCompatible":
+            body = ProbeModels.model_validate(data)
+            return model_adapter.manager.probe(scope, body.baseUrl, body.apiKey)
+        if procedure == "models/probeCatalog":
+            body = ProbeCatalog.model_validate(data)
+            return model_adapter.manager.probe(scope, DEEPSEEK, body.apiKey)
+        if procedure == "models/disconnect":
+            body = DisconnectModel.model_validate(data)
+            return model_adapter.manager.repo.disconnect(scope, body.provider)
+        if procedure == "models/backups":
+            Empty.model_validate(data)
+            return model_adapter.manager.backup_choices(scope)
+        if procedure == "models/setBackups":
+            choices = TypeAdapter(list[Choice]).validate_python(data)
+            return model_adapter.manager.set_backups(scope, choices)
         if procedure == "models/setDefault":
             body = SetDefaultModel.model_validate(data)
             try:
@@ -405,7 +461,7 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
                 authorization_mode=store.authorization.mode,
                 model=model_adapter.preferences.default(scope).snapshot(),
                 instructions=body.instructions,
-                tools=("example_report@1",) if "example_report@1" in tool_allowlist else (),
+                tools=tuple(ref for ref in DEFAULT_TOOLS if ref in tool_allowlist),
             )
             return service.create_bot(scope, body.model_dump(mode="json"), config)
         if procedure == "bots/setComputer":
@@ -421,6 +477,7 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
                     scope,
                     body.model_dump(mode="json", exclude_unset=True),
                     model_configuration,
+                    model_manager=model_adapter.manager,
                 )
             except ValueError:
                 raise RpcError(
@@ -556,6 +613,7 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
             data = await read_input(
                 request,
                 14_050_000 if procedure in ("artifacts/create", "computer/uploadFile") else 128000,
+                allow_array=procedure == "models/setBackups",
             )
             if procedure == "threads/subscribe":
                 body = Subscribe.model_validate(data)

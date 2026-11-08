@@ -7,12 +7,18 @@ import sys
 from pathlib import Path
 
 from agentforge_connectors.browser import BrowserPolicy, service_configuration
+from agentforge_connectors.model_secrets import cipher
+from agentforge_connectors.web import enabled as web_enabled
+from agentforge_connectors.web import policy as web_policy
+from agentforge_connectors.web import search_endpoint
 from agentforge_runtime.config import ModelSettings
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("service", choices=("check", "api", "worker", "supervisor", "web"))
+    parser.add_argument(
+        "service", choices=("check", "api", "worker", "supervisor", "compute", "web")
+    )
     parser.add_argument("--rakazo-root", type=Path)
     args = parser.parse_args()
     # The caller loads .env with uv. Never forward model/DB/MCP credentials to Web.
@@ -31,6 +37,11 @@ def main():
         "AGENTFORGE_TERMINAL_API_ORIGIN",
     }
     if args.service == "check":
+        if os.environ.get("AGENTFORGE_MODEL_ENCRYPTION_KEY"):
+            cipher()
+        if web_enabled():
+            web_policy()
+            search_endpoint()
         ModelSettings.from_env()
         service_configuration()
         policy = BrowserPolicy.from_env()
@@ -67,6 +78,30 @@ def main():
             ]
         else:
             command = [sys.executable, "-m", "agentforge_worker.main", "--watch"]
+    elif args.service == "compute":
+        env.update(
+            {
+                k: v
+                for k, v in os.environ.items()
+                if k
+                in {
+                    "AGENTFORGE_COMPUTER_IMAGE",
+                    "AGENTFORGE_PYTHON_IMAGE",
+                    "AGENTFORGE_MCP_COMPUTER_TOKEN",
+                }
+            }
+        )
+        command = [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "agentforge_supervisor.app:create_app",
+            "--factory",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8766",
+        ]
     elif args.service == "supervisor":
         env.update({k: v for k, v in os.environ.items() if k in shared})
         command = [sys.executable, "-m", "agentforge_supervisor.desktop_pool"]

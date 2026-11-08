@@ -40,7 +40,8 @@ def run_view(row):
         "status": "completed" if row["status"] == "succeeded" else row["status"],
         "trigger": "user",
         "routineId": None,
-        "modelProvider": (row["execution_config"] or {}).get("model", {}).get("provider"),
+        "modelProvider": (row["execution_config"] or {}).get("model", {}).get("catalog_provider")
+        or (row["execution_config"] or {}).get("model", {}).get("provider"),
         "modelId": (row["execution_config"] or {}).get("model", {}).get("model"),
         "error": row["error_code"],
         "startedAt": None,
@@ -284,7 +285,7 @@ class RakazoRepository:
             raise
         return self.bot(scope, agent["agent_id"])
 
-    def update_bot(self, scope, body, model_configuration):
+    def update_bot(self, scope, body, model_configuration, *, model_manager=None):
         from agentforge_core.execution import ExecutionSnapshot
 
         bot_id = body["botId"]
@@ -313,11 +314,15 @@ class RakazoRepository:
             if "modelProvider" in body:
                 requested = (body["modelProvider"], body["modelId"])
                 configured = (
-                    ModelPreferences(self.store, model_configuration).default(
+                    (model_manager or ModelPreferences(self.store, model_configuration)).default(
                         scope, connection=conn
                     )
                     if requested == (None, None)
-                    else model_configuration.select(*requested)
+                    else (
+                        model_manager.select(scope, *requested, connection=conn)
+                        if model_manager
+                        else model_configuration.select(*requested)
+                    )
                 ).snapshot()
                 config = ExecutionSnapshot.model_validate(
                     {**config.model_dump(), "model": configured}
@@ -408,7 +413,7 @@ class RakazoRepository:
             "createdAt": iso(agent["created_at"]),
             "voiceId": None,
             "autoSpeak": False,
-            "modelProvider": model["provider"],
+            "modelProvider": model.get("catalog_provider") or model["provider"],
             "modelId": model.get("model"),
             "thinkingLevel": None,
             "teamChatAmbientEnabled": False,

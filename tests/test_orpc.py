@@ -18,7 +18,11 @@ people = _people
 
 
 def rpc(client, headers, name, data=None):
-    return client.post("/rpc/" + name.replace(".", "/"), headers=headers, json={"json": data or {}})
+    return client.post(
+        "/rpc/" + name.replace(".", "/"),
+        headers=headers,
+        json={"json": {} if data is None else data},
+    )
 
 
 def create_bot(client, headers, **changes):

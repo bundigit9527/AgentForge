@@ -257,7 +257,7 @@ def test_shared_skill_binding_needs_permission_and_cannot_edit_owner_installatio
         == 404
     )
     assert share(client, headers["alice"], "skill", ref).status_code == 200
-    assert len(client.get("/api/v1/skills", headers=headers["bob"]).json()["items"]) == 4
+    assert len(client.get("/api/v1/skills", headers=headers["bob"]).json()["items"]) == 5
     agent = make_agent(client, headers["bob"], skills=[ref])
     assert agent["execution_config"]["skills"][0]["reference"] == ref
     assert (
@@ -265,7 +265,7 @@ def test_shared_skill_binding_needs_permission_and_cannot_edit_owner_installatio
         == 404
     )
     assert share(client, headers["alice"], "skill", ref, "private").status_code == 200
-    assert len(client.get("/api/v1/skills", headers=headers["bob"]).json()["items"]) == 3
+    assert len(client.get("/api/v1/skills", headers=headers["bob"]).json()["items"]) == 4
     assert (
         client.post(
             "/api/v1/threads", headers=headers["bob"], json={"agent_id": agent["agent_id"]}

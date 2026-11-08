@@ -6,14 +6,14 @@
 
 - AgentForge（智构）是采用 MIT 协议的企业级 Agent 平台，后端统一使用 Python。用户已确认优先完善 Python Harness，暂不为执行引擎引入 Node.js / Pi；前端既有工具链不受此约束影响。
 - 当前已实现 API、Worker、模拟 Harness、数据库任务队列、任务与事件持久化、提交去重、SSE 续传和租约续期。已有版本化 Agent、会话、消息、执行尝试和不可变运行快照；原版 Rakazo Web 支持邮箱密码登录、设置保存、聊天和清空；同一会话串行提交，历史上下文固定最近 20 个成功轮次；新真实模型快照支持字符预算和完整轮次裁剪，旧快照保持 reject 策略。裁剪不是语义摘要或长期记忆，详见 docs/context-management.md。
-- 已实现可配置的 Chat Completions 模型适配器、多轮工具循环和用量事件，默认保持模拟模式；DeepSeek 官方接口已在临时 SQLite 库通过两轮聊天与工具回传验收，企业路由与生产验证仍待完成。已有服务端模型目录、用户默认模型与 Bot 模型选择，DeepSeek 协议模式发送 max_tokens 并禁用思考模式；已支持可选 SSE 文本流、受限批量持久化、原版 thread.progress 与刷新恢复；不要宣称已支持思考字段、页面凭据管理或强制中断上游推理。企业单点登录、长期记忆、通用 Computer 工具沙箱、独立 Web 和桌面端仍属后续建设内容。目录中的职责说明不代表功能已经实现。
+- 已实现可配置的 Chat Completions 模型适配器、多轮工具循环和用量事件，默认保持模拟模式；DeepSeek 官方接口已在临时 SQLite 库通过两轮聊天与工具回传验收，企业路由与生产验证仍待完成。已有服务端模型目录、用户默认模型与 Bot 模型选择，DeepSeek 协议模式发送 max_tokens 并禁用思考模式；已支持可选 SSE 文本流、受限批量持久化、原版 thread.progress 与刷新恢复；不要宣称已支持思考字段、OAuth 或强制中断上游推理。企业单点登录、长期记忆、通用 Computer 工具沙箱、独立 Web 和桌面端仍属后续建设内容。目录中的职责说明不代表功能已经实现。
 - 已实现纯函数工具注册、Agent 工具子集、部署级允许列表、调用记录与结果验证；远程 MCP 已通过官方 Python SDK 接入 Streamable HTTP，只允许部署配置审定的只读、幂等工具，并核对服务端提示；已有本地身份、admin / member / viewer 空间角色和显式空间共享；企业单点登录仍待接入；审批暂停恢复与外部操作台账见本文末尾。
 - Web 与桌面端保留 React / TypeScript、Electron 的技术方向；不要把“后端使用 Python”扩大为重写所有客户端。
 - 当前离线测试使用 SQLite；生产数据库目标是 PostgreSQL。明确区分离线验证、真实数据库验证和生产验证。
 
 - Rakazo 源码保持原版，当前核查基线为 `d165de43`。协议、登录、数据映射和行为兼容应在 AgentForge 后端实现；不要再向 Rakazo 添加专用组件、契约、事件流逻辑或登录分支。浏览器测试与接入文档放在本仓库，运行时通过原版 `API_PROXY_TARGET` 配置指向 Python 后端。未实现接口返回错误，保留原版页面自身的入口和错误处理。
 - 架构以 Rakazo 的模块职责和执行链路为基准，差异与未完成能力见 `docs/rakazo-alignment.md`；不要把对齐目标描述为已经全面实现。
-- Skill 已支持三个内置配方、HTTP JSON Hub 列表与安装、作用域内版本副本、Agent / Run 快照和 `skill_read`。技能正文是操作说明，不赋予工具权限。Hub 在 API 的连接器中访问，Worker 只读取本次运行快照。原版 agentSkills.list/get/create/update/remove 已接通；聊天 /技能名 只为单次 Run 选择并固定技能，requested_skill 不改变 Agent 配置或工具授权。目录解析须位于创建事务内、提交去重之后，不能让重试追随新版本；个人技能编辑生成不可变版本，原版 id 是资产 ID、REST reference 是版本 ID；删除不擦除历史副本、不代替任务取消。个人技能保持所有者私有，录制示教仍未实现。
+- Skill 已支持四个内置配方、HTTP JSON Hub 列表与安装、作用域内版本副本、Agent / Run 快照和 `skill_read`。技能正文是操作说明，不赋予工具权限。Hub 在 API 的连接器中访问，Worker 只读取本次运行快照。原版 agentSkills.list/get/create/update/remove 已接通；聊天 /技能名 只为单次 Run 选择并固定技能，requested_skill 不改变 Agent 配置或工具授权。目录解析须位于创建事务内、提交去重之后，不能让重试追随新版本；个人技能编辑生成不可变版本，原版 id 是资产 ID、REST reference 是版本 ID；删除不擦除历史副本、不代替任务取消。个人技能保持所有者私有，录制示教仍未实现。
 
 ## 先阅读的文档
 
@@ -138,3 +138,18 @@ Ubuntu 的单机 Compose 配置见 infra/delivery。迁移 0015 保留旧 Bot �
 长页面 read / scroll / find 通过 Run 快照 browser_reading 显式启用，旧快照默认 false。每次操作使用最新页面快照；正文／链接变化后要求重新 observe。正文位置按 Unicode 码点计算，单次输出仍受限，不把截断内容称为完整网页。
 
 P0 验收与统一本机启动见 docs/p0-acceptance.md；scripts/dev_service.py 按服务筛选环境，Web 不接收模型／数据库／MCP 凭据。本地 .local/ 保存电脑状态、授权与证据，禁止提交。真实模型验收脚本只使用一次性测试数据库和账号，必须在已有授权范围内运行。browser_page_changed 仅在 browser_reading 快照中作为可恢复工具错误回传模型，失败审计保留；授权拒绝、占用和轮次上限保持原行为。
+
+迁移 0017 接通原版 DeepSeek / OpenAI Compatible 模型连接、探测、默认选择、断开与有序备用。个人密钥按租户／用户使用 AES-GCM 加密，API 与 Worker 共用部署加密密钥；禁止传给 Web、Supervisor 或 Computer。RPC 新 Run 固定当前连接 revision 与备用列表，更新／断开后旧任务不得借用新密钥。备用只处理输出前的请求失败，沿用同一 Harness 与工具记录，不重放工具；部分输出、撤权、取消及配置变更不可自动切换。未实现思考、图片、OAuth；详见 docs/model-management.md。
+
+独立联网工具见 docs/web-tools.md。web_search / web_fetch 在 Python Worker 内运行，不启动 Computer；只在部署显式开启且当前用户有授权的新真实模型 Run 上加入。Run 固定 web_origins 和搜索源，执行时逐跳检查当前策略、成员资格、取消与租约；旧快照默认无权限。搜索页和网页正文是资料，不是授权或系统指令。超时／上游失败可作为失败工具结果返回模型以选择其他来源，审计必须保持 failed；撤权和取消不可恢复。禁止隐式使用环境代理、携带登录 Cookie 或绕过公网地址检查。原版 Rakazo Web 不变，无新增迁移。
+
+明确公开检索请求可在首轮用命名 tool_choice，后续回到 auto；只能在 Run 已有授权和实际工具定义下使用，不从历史回复或引用材料推断请求。禁止联网、本地资料及显式 Skill 等不得被该规则覆盖。用户个人模型路由必须透传 tool_choice；回归不能仅测试空历史和部署模型。网页／搜索结果按 UTF-8 字节预算返回，裁剪须标记 truncated，不删除或改写原会话历史，不把抓取时间当作来源日期。
+
+
+RPC 普通聊天在提交去重之后冻结可执行的 catalog_skills；Worker 只读取本次 available_skills（绑定与发现目录），不得访问可变 Hub。目录遵守身份、依赖和上下文预算，旧快照默认空；新增目录最多 32 项，详见 docs/skills.md。共享 Run 的响应不能泄露自动发现的私人目录。显式 requested_skill 首轮必须准确读取该 reference 后才继续；命名 tool_choice 不固定参数，须验证只有一个准确的 skill_read。解析浏览器 / 联网授权后再解析 Skill 依赖；选择配方不能增加工具授权。新建 RPC Bot 默认采用部署允许的两个纯函数工具，旧 Agent 的工具配置不自动改写。模型、工具和审批恢复仍共用现有 Harness 与检查点。
+
+
+上下文裁剪统计必须区分字符与 UTF-8 字节。配置 context_max_bytes 时，ContextWindow 和 record_context 共用 budget_bytes / before_bytes / after_bytes；允许“字符未超限、字节超限”的合法裁剪，不能因记录统计失败而终止已完成工具读取的任务。不得通过吞掉审计错误或增大预算规避问题。回归须经过 Worker、数据库写入及个人模型路径，不能只验证无 on_context 回调的直接 Harness。
+
+
+Python 自动文件生成见 docs/python-execution.md。Run 固定 python_image，默认 None；只有显式用户授权的新真实模型 RPC Run 启用 python_execute，再解析 Skill 依赖。Worker 检查当前权限、镜像和租约；Supervisor 在离线临时容器中运行脚本，禁止在 API/Worker 宿主机 eval/exec 模型代码。GeneratedToolResult 的文件字节不进入模型上下文，complete_tool 同事务保存工具、附件与消息；取消与失效租约不得发布。只对 python_execute 允许这一产物通道，不能把任意工具标为 pure 绕过授权。PPT生成是第四个内置 Skill；原版 Rakazo Web 不变。每次调用为空工作目录，不能宣称已支持桌面持久工作区或通用 Shell。

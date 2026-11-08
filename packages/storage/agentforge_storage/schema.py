@@ -1,7 +1,7 @@
 import sqlalchemy as sa
 
 metadata = sa.MetaData()
-SCHEMA_REVISION = "0016"
+SCHEMA_REVISION = "0017"
 
 agents = sa.Table(
     "agents",
@@ -453,4 +453,36 @@ chat_artifacts = sa.Table(
     sa.CheckConstraint(
         "size BETWEEN 1 AND 10485760 AND length(data) = size", name="ck_chat_artifact_size"
     ),
+)
+
+
+model_connections = sa.Table(
+    "model_connections",
+    metadata,
+    sa.Column("connection_id", sa.String(36), primary_key=True),
+    sa.Column("tenant_id", sa.String(128), nullable=False),
+    sa.Column("user_id", sa.String(128), nullable=False),
+    sa.Column("provider", sa.String(128), nullable=False),
+    sa.Column("revision", sa.Integer, nullable=False),
+    sa.Column("active", sa.Boolean, nullable=False),
+    sa.Column("encrypted_key", sa.LargeBinary, nullable=False),
+    sa.Column("configuration", sa.JSON, nullable=False),
+    sa.UniqueConstraint("tenant_id", "user_id", "provider", name="uq_model_connection_owner"),
+)
+model_selections = sa.Table(
+    "model_selections",
+    metadata,
+    sa.Column("tenant_id", sa.String(128), primary_key=True),
+    sa.Column("space_id", sa.String(128), primary_key=True),
+    sa.Column("user_id", sa.String(128), primary_key=True),
+    sa.Column("provider", sa.String(128), nullable=False),
+    sa.Column("model_id", sa.String(128), nullable=False),
+)
+model_backups = sa.Table(
+    "model_backups",
+    metadata,
+    sa.Column("tenant_id", sa.String(128), primary_key=True),
+    sa.Column("space_id", sa.String(128), primary_key=True),
+    sa.Column("user_id", sa.String(128), primary_key=True),
+    sa.Column("choices", sa.JSON, nullable=False),
 )

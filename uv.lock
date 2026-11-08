@@ -13,6 +13,7 @@ source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "anyio" },
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "httpx2" },
@@ -36,6 +37,7 @@ dev = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.14,<2" },
     { name = "anyio", specifier = ">=4.15,<5" },
+    { name = "cryptography", specifier = ">=50,<51" },
     { name = "fastapi", specifier = ">=0.115,<1" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "httpx2", specifier = ">=2.16,<3" },
