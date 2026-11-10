@@ -34,3 +34,7 @@ AGENTFORGE_PYTHON_POLICY_FILE=
 AGENTFORGE_PYTHON_IMAGE=
 AGENTFORGE_PYTHON_ENDPOINT=http://127.0.0.1:8766
 # API/Worker and compute share AGENTFORGE_MCP_COMPUTER_TOKEN; never forward it to Computer/Web.
+
+# Optional Bot workspace file tools; explicit user grants, save requires approval.
+# See docs/workspace-bridge.md; empty keeps old behavior.
+AGENTFORGE_WORKSPACE_POLICY_FILE=

@@ -15,6 +15,18 @@ def main():
     signal.alarm(55)
     job = json.load(sys.stdin)
     root = Path("/workspace")
+    total = 0
+    for item in job.get("inputs", []):
+        name = item["name"]
+        if Path(name).name != name or name in (".", "..") or name.startswith("_agentforge_"):
+            raise ValueError("Invalid input path")
+        data = base64.b64decode(item["data"], validate=True)
+        total += len(data)
+        if not data or total > 10 * 1024 * 1024:
+            raise ValueError("Invalid input size")
+        fd = os.open(root / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(data)
     script = root / "_agentforge_job.py"
     script.write_text(job["code"])
     # Limits also apply to descendants. No host paths, credentials or network are present.

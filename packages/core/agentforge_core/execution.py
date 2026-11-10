@@ -6,9 +6,11 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agentforge_core.browser import Origin, WebUrl, browser_tools, permitted_url
 from agentforge_core.mcp import McpToolSnapshot
+from agentforge_core.python_execution import FileReference
 from agentforge_core.reports import exports_csv
 from agentforge_core.skills import SkillReference, SkillSnapshot
 from agentforge_core.tools import ToolReferences
+from agentforge_core.workspace import WORKSPACE_TOOLS
 
 
 class ModelConfig(BaseModel):
@@ -25,13 +27,17 @@ class ModelConfig(BaseModel):
     context_max_bytes: int | None = Field(default=None, ge=1024, le=2147483647, strict=True)
     # Missing fields on historical snapshots retain the former reject-on-overflow policy.
     context_policy: Literal["reject", "trim_history"] = "reject"
-    context_max_chars: int = Field(default=100000, ge=4000, le=200000, strict=True)
+    context_max_chars: int = Field(default=100000, ge=4000, le=2147483647, strict=True)
+    compact_tool_results: bool = Field(default=False, strict=True)
+    context_window_tokens: int | None = Field(default=None, ge=1025, le=2147483647, strict=True)
     timeout_seconds: float = Field(default=30, gt=0, le=120, allow_inf_nan=False)
     max_rounds: int = Field(default=8, ge=1, le=32, strict=True)
     max_completion_tokens: int = Field(default=2048, ge=1, le=131072, strict=True)
 
     @model_validator(mode="after")
     def validate_route(self):
+        if self.context_max_chars > 200000 and not self.compact_tool_results:
+            raise ValueError("Legacy character budget must not exceed 200000")
         personal = (self.connection_id, self.connection_revision, self.catalog_provider)
         if any(x is not None for x in personal) and (
             any(x is None for x in personal) or self.provider != "chat_completions"
@@ -68,6 +74,10 @@ class ExecutionSnapshot(BaseModel):
     web_origins: tuple[Origin, ...] = Field(default=(), max_length=32)
     web_search_endpoint: WebUrl | None = None
     python_image: str | None = Field(default=None, pattern=r"^sha256:[a-f0-9]{64}$")
+    python_continuity: bool = Field(default=False, strict=True)
+    python_files: tuple[FileReference, ...] = Field(default=(), max_length=12)
+    workspace_enabled: bool = Field(default=False, strict=True)
+    workspace_mode: Literal["team", "dedicated"] | None = None
     model_backups: tuple[ModelConfig, ...] = Field(default=(), max_length=10)
 
     @property
@@ -75,10 +85,15 @@ class ExecutionSnapshot(BaseModel):
         return self.skills + self.catalog_skills
 
     @property
+    def python_tool(self) -> str:
+        return "python_execute@2" if self.python_continuity else "python_execute@1"
+
+    @property
     def tool_references(self) -> tuple[str, ...]:
         return (
             *self.tools,
-            *(("python_execute@1",) if self.python_image else ()),
+            *(WORKSPACE_TOOLS if self.workspace_enabled else ()),
+            *((self.python_tool,) if self.python_image else ()),
             *(("web_fetch@1",) if self.web_origins else ()),
             *(("web_search@1",) if self.web_search_endpoint else ()),
             *(t.reference for t in self.mcp_tools),
@@ -87,6 +102,16 @@ class ExecutionSnapshot(BaseModel):
 
     @model_validator(mode="after")
     def validate_skills(self):
+        if self.workspace_enabled and (
+            not self.python_continuity or "workspace_save@1" not in self.approval_tools
+        ):
+            raise ValueError("Workspace tools require file continuity and save approval")
+        if self.workspace_mode and not self.workspace_enabled:
+            raise ValueError("Workspace mode requires workspace tools")
+        if self.python_continuity and not self.python_image:
+            raise ValueError("File continuity requires Python authorization")
+        if self.python_files and not self.python_continuity:
+            raise ValueError("File references require continuity")
         if self.python_image and self.model.provider != "chat_completions":
             raise ValueError("Python execution requires Chat Completions")
         if self.web_origins and self.model.provider != "chat_completions":

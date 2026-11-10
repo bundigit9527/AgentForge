@@ -114,3 +114,18 @@ Docker 交付采用外部 PostgreSQL、独立 API / Worker 和持有 Docker sock
 ## Python 文件生成补充（2026-11-08）
 
 新增独立 Python 执行容器、PPT生成 Skill、二进制附件原子交付，继续使用原有 Python Harness 和原版 Rakazo Web。默认关闭并按用户授权；旧 Run 保持不变。脚本执行每次使用空目录，尚不复用 Team/Private 桌面文件或运行通用 Shell。配置、验收及 Rakazo 逐项差异见 [Python 自动文件生成](python-execution.md)。
+
+
+## 文件连续编辑补充（2026-11-08）
+
+已补齐：冻结会话附件清单、Python 读取指定版本、PPT Skill v2、修改后发布新版本、原版附件版本列表和最新版本聚合。既有字节及历史 Run 保留，取消/失租约不得发布；重复调用复用已保存产物。与 Rakazo 相比，文件连续编辑通过不可变附件搬入临时容器完成，尚未统一到 Team/Private Computer 持久工作目录，没有通用 Shell、桌面打开产物和自动视觉验收。详见 [实现与验收](python-execution.md)。
+
+
+## 电脑文件链路补充（2026-11-08）
+
+已接通原版语义的目录列举、电脑文件转聊天附件；增加经原版审批的附件保存到当前Bot电脑，复用Team/Private和工作区快照，真实电脑重启后文件可恢复。Python仍在临时执行容器生成，尚未实现通用Shell、图形打开、命名attach_file归族及Team全局shared目录。逐项源码映射与后续顺序见 [文件能力对标](workspace-bridge.md)。
+
+
+### 2026-11-10：模型窗口与工具上下文
+
+已核对 Rakazo `9218c401`：runtime-context读取实际模型窗口，context-selection使用保守字节估算并缩短工具结果。AgentForge 新个人模型连接增加已知DeepSeek 1M目录和窗口来源，去掉个人模型固定10万字符阻塞；新Run按请求副本缩短旧/大工具正文，保留完整调用配对、Skill正文、来源与控制字段以及原始审批/工具记录。旧连接和旧Run不静默更改，需要明确升级窗口。仍未对齐 read_history/search_history、缓存感知投影、图像预算和语义摘要。公开搜索首轮规则补充“帮忙检索比较好的智能体”等直接请求，保留本地资料/禁止联网/显式Skill边界；不宣称所有模型都会自主选择正确工具。

@@ -1,10 +1,12 @@
 """Bounded request context without changing persisted conversation history."""
 
 import json
+from copy import deepcopy
 
 from agentforge_core.execution import ContextMessage, ModelConfig
 from agentforge_core.models import RunErrorCode
 
+from agentforge_runtime.context_tools import VERBATIM, shorten, tool_results
 from agentforge_runtime.errors import RuntimeFailure
 
 OMITTED_HISTORY_NOTICE = (
@@ -70,6 +72,8 @@ class ContextWindow:
         return True
 
     def fit(self) -> tuple[list[dict], dict | None]:
+        if self.config.compact_tool_results and self.config.context_policy == "trim_history":
+            return self._fit_projection()
         messages = self._messages(self.history, self.dropped_turns)
         if self.config.context_policy == "reject":
             # Keep the historical snapshot's exact accounting/error behavior.
@@ -110,3 +114,74 @@ class ContextWindow:
         # Never truncate instructions, the current prompt, tool schemas or any
         # current-turn tool arguments/results. Stop before the next model request.
         raise RuntimeFailure(RunErrorCode.MODEL_CONTEXT_LIMIT_EXCEEDED)
+
+    def _fit_projection(self):
+        # Approval checkpoints and the tool journal keep the original current list.
+        # Only this request's projection changes; calls/arguments are never edited.
+        current = deepcopy(self.current)
+        try:
+            results = tool_results(current)
+        except (KeyError, TypeError, ValueError):
+            raise RuntimeFailure(RunErrorCode.EXECUTION_FAILED) from None
+        remaining = list(self.history)
+        removed = 0
+        shortened = set()
+
+        def messages():
+            notice = (
+                [{"role": "system", "content": OMITTED_HISTORY_NOTICE}]
+                if self.dropped_turns + removed
+                else []
+            )
+            return [*self.prefix, *notice, *remaining, *current]
+
+        before = deepcopy(messages())
+        latest = max((group for _, group, _ in results), default=0)
+
+        def shrink(index, limit):
+            original = current[index]["content"]
+            value = shorten(original, limit)
+            if value != original:
+                current[index]["content"] = value
+                shortened.add(index)
+                return True
+            return False
+
+        # Like Rakazo, older evidence gets a bounded representation. Keep URLs,
+        # IDs and operation outcomes so the agent does not restart completed work.
+        for index, group, name in results:
+            if group < latest and name not in VERBATIM:
+                shrink(index, 1024)
+        while not self.within_budget(messages()) and remaining:
+            remaining = remaining[2:]
+            removed += 1
+        while not self.within_budget(messages()):
+            changed = False
+            for index, _, name in results:
+                if name in VERBATIM:
+                    continue
+                size = len(current[index]["content"].encode())
+                changed = shrink(index, max(256, size // 2)) or changed
+            if not changed:
+                # Required controls/instructions and large arguments still fail.
+                raise RuntimeFailure(RunErrorCode.MODEL_CONTEXT_LIMIT_EXCEEDED)
+        selected = messages()
+        self.history = remaining
+        self.dropped_turns += removed
+        if not removed and not shortened:
+            return selected, None
+        stats = {
+            "budget_chars": self.config.context_max_chars,
+            "before_chars": context_size(before, self.tools),
+            "after_chars": context_size(selected, self.tools),
+            "dropped_turns": removed,
+            "retained_turns": len(remaining) // 2,
+            "truncated_tool_results": len(shortened),
+        }
+        if self.config.context_max_bytes is not None:
+            stats.update(
+                budget_bytes=self.config.context_max_bytes,
+                before_bytes=context_bytes(before, self.tools),
+                after_bytes=context_bytes(selected, self.tools),
+            )
+        return selected, stats

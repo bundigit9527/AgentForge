@@ -5,6 +5,7 @@ import io
 import zipfile
 from dataclasses import dataclass
 from typing import Annotated
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -48,14 +49,65 @@ class PythonArguments(BaseModel):
         return [output_name(v) for v in values]
 
 
-class PythonJob(PythonArguments):
-    image: ImageId
-
-
 class EncodedFile(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     name: str = Field(min_length=1, max_length=128)
     data: str = Field(min_length=4, max_length=14_000_000)
+
+
+class InputFile(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+    artifact_id: str
+    name: str = Field(min_length=1, max_length=128)
+
+    @field_validator("artifact_id")
+    @classmethod
+    def valid_id(cls, value):
+        return str(UUID(value))
+
+    @field_validator("name")
+    @classmethod
+    def valid_name(cls, value):
+        filename(value)
+        if value.startswith("_agentforge_"):
+            raise ValueError("Reserved input name")
+        return value
+
+
+class FileReference(InputFile):
+    size: int = Field(gt=0, le=MAX_FILE)
+    mime_type: str = Field(max_length=128)
+    version: int = Field(default=1, ge=1)
+
+
+class PythonArgumentsV2(PythonArguments):
+    inputs: list[InputFile] = Field(default_factory=list, max_length=4)
+
+    @field_validator("inputs")
+    @classmethod
+    def unique_inputs(cls, values):
+        if len({v.name for v in values}) != len(values):
+            raise ValueError("Duplicate input aliases")
+        return values
+
+
+class PythonJob(PythonArguments):
+    image: ImageId
+    inputs: list[EncodedFile] = Field(default_factory=list, max_length=4)
+
+    @field_validator("inputs")
+    @classmethod
+    def bounded_inputs(cls, values):
+        total = 0
+        names = set()
+        for item in values:
+            InputFile.valid_name(item.name)
+            data = base64.b64decode(item.data, validate=True)
+            total += len(data)
+            if not data or total > MAX_FILE or item.name in names:
+                raise ValueError("Invalid input file batch")
+            names.add(item.name)
+        return values
 
 
 class PythonResponse(BaseModel):
@@ -77,6 +129,8 @@ class GeneratedFile:
     name: str
     mime_type: str
     data: bytes
+    artifact_id: str | None = None
+    parent_id: str | None = None
 
     @classmethod
     def decode(cls, encoded):

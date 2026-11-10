@@ -97,7 +97,13 @@ class ApprovalRepository:
                     {
                         "kind": "ask",
                         "approvalEffectId": effect["effect_id"],
-                        "text": "请确认调用工具：" + request["tool_reference"],
+                        "text": (
+                            "保存附件到团队电脑（同空间成员可见）"
+                            if request["arguments"].get("computer_mode") == "team"
+                            else "保存附件到私人电脑"
+                        )
+                        if request["tool_reference"] == "workspace_save@1"
+                        else "请确认调用工具：" + request["tool_reference"],
                         "detail": json.dumps(request, ensure_ascii=False, indent=2),
                         "status": "pending",
                         "actions": [

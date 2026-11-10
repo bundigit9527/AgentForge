@@ -34,6 +34,9 @@ people = _people
     [
         ("请检索今天的财经新闻，核对发布日期，并附来源链接", True),
         ("帮我检索下今天ETF规模最大的一支", True),
+        ("帮忙检索比较好的智能体", True),
+        ("帮我检索下好用的PPT skill", True),
+        ("请检索上传的资料", False),
         ("请联网搜索 Python 官方文档", True),
         ("Please search the web for current financial news", True),
         ("不要联网搜索，只根据我提供的资料分析", False),

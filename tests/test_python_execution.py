@@ -84,8 +84,8 @@ def test_chat_auto_skill_script_repair_and_file_download(
         calls.append(body)
         if step == 0:
             assert "python_execute" in str(body["tools"])
-            assert "builtin:presentation@1" in str(body["messages"])
-            tool = tool_call("recipe", "skill_read", '{"reference":"builtin:presentation@1"}')
+            assert "builtin:presentation@2" in str(body["messages"])
+            tool = tool_call("recipe", "skill_read", '{"reference":"builtin:presentation@2"}')
         elif step in (1, 2):
             if step == 2:
                 assert "NameError" in body["messages"][-1]["content"]
@@ -96,9 +96,11 @@ def test_chat_auto_skill_script_repair_and_file_download(
             )
         else:
             receipt = json.loads(body["messages"][-1]["content"])
-            assert receipt["files"] == [
-                {"name": "方案.pptx", "mime_type": PPTX_MIME, "size": len(ppt_bytes())}
-            ]
+            assert len(receipt["files"]) == 1
+            assert receipt["files"][0]["name"] == "方案.pptx"
+            assert receipt["files"][0]["mime_type"] == PPTX_MIME
+            assert receipt["files"][0]["size"] == len(ppt_bytes())
+            assert receipt["files"][0]["artifact_id"]
             assert "base64" not in str(body["messages"][-1])
             return httpx.Response(200, json=completion("已生成可编辑 PPT，见附件。"))
         return httpx.Response(200, json=completion(None, [tool]))
@@ -281,7 +283,8 @@ def test_endpoint_authorization_image_and_input_bounds(monkeypatch, python_grant
         assert not execute.called
         assert client.post("/python/execute", headers=auth, json=payload).status_code == 200
         assert (
-            client.post("/python/execute", headers=auth, content=b"x" * 100001).status_code == 413
+            client.post("/python/execute", headers=auth, content=b"x" * 14_100_001).status_code
+            == 413
         )
 
 

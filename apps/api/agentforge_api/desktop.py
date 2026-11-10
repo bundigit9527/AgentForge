@@ -102,7 +102,15 @@ class Desktop:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
                 sock.settimeout(
                     180
-                    if action in ("boot", "stop", "uploadFile", "prepareSuspend", "commitSuspend")
+                    if action
+                    in (
+                        "boot",
+                        "stop",
+                        "uploadFile",
+                        "prepareSuspend",
+                        "commitSuspend",
+                        "workspace",
+                    )
                     else 35
                 )
                 sock.connect(str(self.pool or (str(self.manifest) + ".sock")))

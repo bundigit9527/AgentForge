@@ -13,7 +13,7 @@ from agentforge_core.models import RunConflict, RunNotFound, Scope
 from agentforge_storage.authorization import owned
 from agentforge_storage.conversations import agent_row
 from agentforge_storage.identity import insert
-from agentforge_storage.schema import artifacts, chat_artifacts, runs
+from agentforge_storage.schema import artifact_revisions, artifacts, chat_artifacts, runs
 from agentforge_storage.thread_feed import append, iso
 
 NAME = "number-summary.csv"
@@ -63,25 +63,40 @@ class ArtifactRepository:
                 sa.literal(NAME).label("name"),
                 sa.literal(MIME).label("mime_type"),
                 sa.literal("数值统计报告").label("description"),
+                artifacts.c.artifact_id.label("family_id"),
+                sa.literal(1).label("version"),
             )
             .select_from(artifacts.join(runs))
             .where(owned(runs, scope), self.store.authorization.member_condition(scope))
         )
-        files = sa.select(
-            *(
-                chat_artifacts.c[key]
-                for key in (
-                    "artifact_id",
-                    "run_id",
-                    "created_at",
-                    "agent_id",
-                    "size",
-                    "name",
-                    "mime_type",
-                    "description",
+        files = (
+            sa.select(
+                *(
+                    chat_artifacts.c[key]
+                    for key in (
+                        "artifact_id",
+                        "run_id",
+                        "created_at",
+                        "agent_id",
+                        "size",
+                        "name",
+                        "mime_type",
+                        "description",
+                    )
+                ),
+                sa.func.coalesce(
+                    artifact_revisions.c.family_id, chat_artifacts.c.artifact_id
+                ).label("family_id"),
+                sa.func.coalesce(artifact_revisions.c.version, 1).label("version"),
+            )
+            .select_from(
+                chat_artifacts.outerjoin(
+                    artifact_revisions,
+                    artifact_revisions.c.artifact_id == chat_artifacts.c.artifact_id,
                 )
             )
-        ).where(owned(chat_artifacts, scope), self.store.authorization.member_condition(scope))
+            .where(owned(chat_artifacts, scope), self.store.authorization.member_condition(scope))
+        )
         if content:
             old, files = old.add_columns(artifacts.c.data), files.add_columns(chat_artifacts.c.data)
         if bot_id:
@@ -142,7 +157,7 @@ class ArtifactRepository:
             "description": row["description"],
             "mimeType": row["mime_type"],
             "size": row["size"],
-            "version": 1,
+            "version": row.get("version", 1),
             "createdAt": iso(row["created_at"]),
         }
 
@@ -155,8 +170,36 @@ class ArtifactRepository:
                 view["contentBase64"] = b64encode(row["data"]).decode("ascii")
             return view
 
+    def versions(self, scope, artifact_id):
+        with self.store.engine.connect() as conn:
+            self.store.authorization.require(conn, scope)
+            target = self.row(conn, scope, artifact_id, None)
+            rows = self.query(scope, target["agent_id"])
+            versions = (
+                conn.execute(
+                    sa.select(rows)
+                    .where(rows.c.family_id == target["family_id"])
+                    .order_by(rows.c.version.desc())
+                )
+                .mappings()
+                .all()
+            )
+            return [
+                {k: self.view(row)[k] for k in ("id", "version", "name", "createdAt")}
+                for row in versions
+            ]
+
     def listing(self, scope, bot_id=None, *, limit=None, cursor=None):
         rows_table = self.query(scope, bot_id)
+        if limit is not None:
+            ranked = sa.select(
+                rows_table,
+                sa.func.row_number()
+                .over(partition_by=rows_table.c.family_id, order_by=rows_table.c.version.desc())
+                .label("position"),
+                sa.func.count().over(partition_by=rows_table.c.family_id).label("version_count"),
+            ).subquery()
+            rows_table = sa.select(ranked).where(ranked.c.position == 1).subquery()
         q = sa.select(rows_table)
         with self.store.engine.connect() as conn:
             self.store.authorization.require(conn, scope)
@@ -180,7 +223,9 @@ class ArtifactRepository:
         if limit is None:
             return [self.view(row) for row in rows]
         return {
-            "items": [{**self.view(row), "versionCount": 1} for row in rows[:limit]],
+            "items": [
+                {**self.view(row), "versionCount": row["version_count"]} for row in rows[:limit]
+            ],
             "nextCursor": rows[limit - 1]["artifact_id"] if len(rows) > limit else None,
         }
 
@@ -198,7 +243,9 @@ def file_block(row):
     return block
 
 
-def store_file(conn, scope, bot, run_id, name, mime, description, data, nonce, now):
+def store_file(
+    conn, scope, bot, run_id, name, mime, description, data, nonce, now, *, artifact_id=None
+):
     digest = hashlib.sha256(data).hexdigest()
     fingerprint = hashlib.sha256(
         json.dumps([name, mime, description, digest], ensure_ascii=False).encode()
@@ -207,7 +254,7 @@ def store_file(conn, scope, bot, run_id, name, mime, description, data, nonce, n
         conn.execute(
             insert(conn, chat_artifacts)
             .values(
-                artifact_id=str(uuid4()),
+                artifact_id=artifact_id or str(uuid4()),
                 **asdict(scope),
                 agent_id=bot,
                 run_id=run_id,
@@ -288,7 +335,7 @@ def save_attachment_result(conn, run, args):
         )
 
 
-def save_generated_files(conn, run, call_id, files):
+def save_generated_files(conn, run, call_id, files, arguments):
     from agentforge_core.python_execution import FILE_MIMES, GeneratedFile, output_name
 
     if (
@@ -298,6 +345,9 @@ def save_generated_files(conn, run, call_id, files):
     ):
         raise ValueError("Invalid generated file batch")
     scope = Scope(run["tenant_id"], run["space_id"], run["user_id"])
+    from agentforge_storage.file_continuity import prepare_revisions, save_revision
+
+    revisions = prepare_revisions(conn, run, files, arguments)
     for file in files:
         if (
             not isinstance(file, GeneratedFile)
@@ -317,7 +367,10 @@ def save_generated_files(conn, run, call_id, files):
             file.data,
             key,
             run["updated_at"],
+            artifact_id=file.artifact_id,
         )
+        if new and file.artifact_id:
+            save_revision(conn, row["artifact_id"], file.parent_id, revisions.get(file.parent_id))
         if new and run["thread_id"]:
             append(
                 conn,

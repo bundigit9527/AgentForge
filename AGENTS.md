@@ -102,7 +102,7 @@ uv run --locked --offline pytest tests/test_worker.py
 - **提交幂等**：同一身份范围内，相同 `Idempotency-Key` 与请求内容复用同一任务；相同键但不同内容返回冲突。不同身份范围之间不能复用任务。
 - **租约与取消**：只有持有有效租约和当前执行标识的 Worker 可以开始新工具调用或写回结果；取消、失效或重新领取后，旧执行不能覆盖任务结果。
 - **副作用与恢复**：现有自动重试适用于无外部副作用的模拟工具。模型请求在崩溃恢复时可能重发并重复计费。接入真实工具时，为外部操作设计独立幂等与结果核对；未知结果不能直接重放。取消状态不代表正在运行的同步函数已被强制终止。
-- **上下文预算**：策略和字符预算固定在模型快照中；缺少新字段的旧快照保持原有计数及超限失败行为。裁剪只发生在本次执行的历史副本，按最早完整 user / assistant 轮次移除；不得裁剪指令、当前问题、Skill 目录、工具定义或本轮工具调用与结果。context_trimmed 只记录计数，仍须校验租约和当前权限；不改写消息、快照和重试输入。字符数不等于模型 token 数。
+- **上下文预算**：策略和字符预算固定在模型快照中；缺少新字段的旧快照保持原有计数及超限失败行为。裁剪只发生在本次执行的历史副本，按最早完整 user / assistant 轮次移除；不得裁剪指令、当前问题、Skill 目录、工具定义或工具调用参数。仅新 compact_tool_results 快照可按 docs/context-management.md 缩短请求副本中的工具正文，保留调用配对、控制字段和原始审计；旧快照结果保持完整。context_trimmed 只记录计数，仍须校验租约和当前权限；不改写消息、快照和重试输入。字符数不等于模型 token 数。
 - **事件流**：模型分片通过持有当前租约的 Worker 写入 model_text，再事务化投影为 thread.progress；部分草稿不作为成功消息或下轮上下文，重试须清除旧尝试的进度。RPC 会话游标独立于 REST 的 Run 游标；会话消息和事件在同一事务中落库，不从时间戳推算游标。保留持久化、运行内单调游标与断线续传语义，保持 `Last-Event-ID` 的优先级；等待新事件时不占用数据库连接，不遗漏最终事件。当前会话选择按用户隔离；原版 threads.clear 在一个事务内取消任务并清空消息，不重置游标，不删除 Run 审计。锁顺序遵守 Worker 的 Run → Thread，防止取消 / 完成死锁。扩展会话 API 仍可使用，但原版 Rakazo 不调用这些接口；不能依赖客户端携带新增请求头或重置游标。事件流遵守与查询接口相同的身份范围。
 - **MCP**：默认禁用；配置文件由部署管理，按租户、空间和显式用户授权。API 发现并绑定工具定义，Run 固定定义摘要和路由指纹；Worker 调用前复核当前授权及远端定义。服务端 readOnlyHint / idempotentHint 不等于权限；只有管理员审定的 read_tools 可以执行。工具通过统一 ToolExecutor / 审计，不能标成 pure 绕过检查。共享 Agent 不分享 MCP 服务授权；mock 配置不能绑定 MCP。协议客户端不得自动重试 tools/call，不开启 sampling、roots、elicitation、资源自动抓取或本地进程。新增依赖按 uv.lock 安装；原版 Rakazo MCP 管理页面仍未接通，不伪造成功。
 - **工具与凭据**：工具参数需要校验，执行范围由代码中的授权规则约束；模型输出、检索材料与记忆不能扩大权限。异常和日志不得泄露令牌、数据库凭据或连接串。
@@ -152,4 +152,12 @@ RPC 普通聊天在提交去重之后冻结可执行的 catalog_skills；Worker 
 上下文裁剪统计必须区分字符与 UTF-8 字节。配置 context_max_bytes 时，ContextWindow 和 record_context 共用 budget_bytes / before_bytes / after_bytes；允许“字符未超限、字节超限”的合法裁剪，不能因记录统计失败而终止已完成工具读取的任务。不得通过吞掉审计错误或增大预算规避问题。回归须经过 Worker、数据库写入及个人模型路径，不能只验证无 on_context 回调的直接 Harness。
 
 
-Python 自动文件生成见 docs/python-execution.md。Run 固定 python_image，默认 None；只有显式用户授权的新真实模型 RPC Run 启用 python_execute，再解析 Skill 依赖。Worker 检查当前权限、镜像和租约；Supervisor 在离线临时容器中运行脚本，禁止在 API/Worker 宿主机 eval/exec 模型代码。GeneratedToolResult 的文件字节不进入模型上下文，complete_tool 同事务保存工具、附件与消息；取消与失效租约不得发布。只对 python_execute 允许这一产物通道，不能把任意工具标为 pure 绕过授权。PPT生成是第四个内置 Skill；原版 Rakazo Web 不变。每次调用为空工作目录，不能宣称已支持桌面持久工作区或通用 Shell。
+Python 自动文件生成见 docs/python-execution.md。Run 固定 python_image，默认 None；只有显式用户授权的新真实模型 RPC Run 启用 python_execute，再解析 Skill 依赖。Worker 检查当前权限、镜像和租约；Supervisor 在离线临时容器中运行脚本，禁止在 API/Worker 宿主机 eval/exec 模型代码。GeneratedToolResult 的文件字节不进入模型上下文，complete_tool 同事务保存工具、附件与消息；取消与失效租约不得发布。只对 python_execute 允许这一产物通道，不能把任意工具标为 pure 绕过授权。PPT生成是第四个内置 Skill；原版 Rakazo Web 不变。旧工具每次调用为空工作目录，不能宣称已支持桌面持久工作区或通用 Shell。
+
+
+迁移0018增加不可变附件版本关系。新授权 Run 使用 python_execute@2、python_continuity 和冻结的 python_files；旧默认 false/空，绑定旧PPT配方的配置保留v1工具。文件发现限当前用户、Bot、未清空会话的成功任务与显式附件；共享 Run 隐去私人文件清单。实际字节读取必须检查当前租约和权限，只可读取冻结版本或本Run产物。输入别名匹配导出名才建立新版本，原字节不覆盖；文件族按固定顺序加锁分配版本，工具/附件/版本/消息同事务。修改旧版创建有确切parent_id的新版本，不自动合并。容器仍为临时目录，选定输入通过受限协议传入，绝不挂宿主机工作区。详见 docs/python-execution.md。
+
+
+电脑文件互通见 docs/workspace-bridge.md。workspace_enabled 默认false，须同时具备Python连续文件能力和显式workspace授权；Run固定实际电脑模式，workspace_save@1必须加入approval_tools。list_files / attach_file只访问当前Bot工作目录，后者可经受控GeneratedToolResult通道发布附件；不要将这项例外扩展到任意read工具。workspace_save是唯一注册的write适配器，API须复核活动工具及同参数dispatched台账，不能仅凭服务令牌放行。文件副本按artifact_id生成固定路径，已有内容不符时拒绝覆盖；Team共享风险在原版审批卡片中说明。Supervisor检查执行授权与代次，Agent与人工控制互斥。复制后取消/断线/快照失败可能有未知副作用，禁止自动重放或宣称磁盘已回滚。当前attach_file只有path语义，命名版本、shared/、read_file/write_file/shell/open_path仍待对齐，不能宣传已完全复刻Rakazo。
+
+2026-11-10：已知个人模型窗口来自审定目录或显式覆盖；旧连接缺少来源时不得擅自扩大。新Run固定compact_tool_results/context_window_tokens；工具投影只缩短正文，不改审批checkpoint、Skill正文、参数或原始工具记录。context_trimmed支持仅工具裁剪，依旧受当前租约与权限检查。

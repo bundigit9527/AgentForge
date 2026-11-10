@@ -3,7 +3,7 @@ from agentforge_core.skills import SkillHub
 from agentforge_storage.skills import SkillRepository
 from agentforge_storage.user_skills import UserSkillRepository
 
-from agentforge_skills.builtin import BUILTIN_SKILLS
+from agentforge_skills.builtin import BUILTIN_SKILLS, LEGACY_BUILTIN_SKILLS
 from agentforge_skills.markdown import resolve_document
 
 
@@ -11,11 +11,15 @@ class SkillService:
     def __init__(self, repository: SkillRepository, hub: SkillHub):
         self.repository = repository
         self.hub = hub
-        self.builtin = {skill.reference: skill for skill in BUILTIN_SKILLS}
+        self.builtin = {
+            skill.reference: skill for skill in (*LEGACY_BUILTIN_SKILLS, *BUILTIN_SKILLS)
+        }
         self.user = UserSkillRepository(
             repository.engine, repository.clock, auth_mode=repository.authorization.mode
         )
-        self.reserved_names = {skill.manifest.name.casefold() for skill in BUILTIN_SKILLS}
+        self.reserved_names = {
+            skill.manifest.name.casefold() for skill in (*LEGACY_BUILTIN_SKILLS, *BUILTIN_SKILLS)
+        }
 
     def list(self, scope, offset, limit):
         return [entry[0] for entry in self.catalog(scope)[offset : offset + limit]]
@@ -26,7 +30,7 @@ class SkillService:
                 return self.catalog(scope, connection=conn)
         installed = self.repository.catalog(scope, connection=connection)
         personal = self.user.catalog(scope, connection=connection)
-        return [(skill, 0.0, 0.0) for skill in self.builtin.values()] + installed + personal
+        return [(skill, 0.0, 0.0) for skill in BUILTIN_SKILLS] + installed + personal
 
     def resolve(self, scope, references):
         resolved = []

@@ -76,3 +76,43 @@ BUILTIN_SKILLS = tuple(
     )
     for manifest in _RECIPES
 )
+
+# Keep the published v1 recipe resolvable; only the newest recipe is discoverable.
+LEGACY_BUILTIN_SKILLS = BUILTIN_SKILLS[-1:]
+_continuation = SkillManifest(
+    skill_id="presentation",
+    version=2,
+    name="PPT生成",
+    description="根据资料生成可编辑 PPT，或读取已有 PPT 按要求修改并交付新版本。",
+    required_tools=("python_execute@2",),
+    content=(
+        "# PPT生成与修改\n"
+        "结合本轮要求和已有对话；主题明确时直接执行，默认中文、16:9、6至8页。"
+        "只有缺少必要主题或源文件时才询问，不重复索要已有资料。\n"
+        "新建：调用 python_execute，使用 python-pptx（from pptx import Presentation）"
+        "生成可编辑文本、形状和表格。"
+        "浅底深字，标题30至36pt，正文22至28pt，留足边距，拆分过密内容。"
+        "用 Inches(13.333)、Inches(7.5) 设置画布。保留已有来源，不编造数字或日期。\n"
+        "修改：从 available files 选择目标 artifact_id；通过 inputs 指定该 ID 和本地文件名，"
+        "用 Presentation(文件名) 读取真实 PPT，检查页数、文本和形状，再只修改用户要求的页面或元素。"
+        "保留其余页面、布局、图片和样式，勿凭对话重新生成整份文件。"
+        "保存为相同 input 文件名并在 exports 声明，系统保存新版本，原文件保留。"
+        "如用户要求另存独立文件，使用新的 exports 文件名。\n"
+        "保存后重新打开，检查页数、目标内容及形状边界；修改时对比未要求修改的内容，"
+        "print 简短验收结果。"
+        "工具报错时根据 stderr 修正，下一次调用须再次提供 inputs；"
+        "中间产物可用返回的 artifact_id 继续读取。"
+        "单次输入和输出分别最多4个、合计10MiB；无网络、无需安装依赖。\n"
+        "仅在 exit_code 为0且 files 返回产物时告知完成，附件自动发布，不虚构下载路径。"
+        "结构检查不等于视觉检查，未渲染不得声称逐页审图。"
+    ),
+)
+BUILTIN_SKILLS = BUILTIN_SKILLS[:-1] + (
+    SkillSnapshot(
+        reference="builtin:presentation@2",
+        source="builtin",
+        source_id="builtin",
+        manifest=_continuation,
+        sha256=_continuation.digest(),
+    ),
+)

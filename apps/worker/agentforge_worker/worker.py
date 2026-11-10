@@ -9,8 +9,10 @@ from agentforge_connectors.mcp import McpService
 from agentforge_connectors.model_execution import managed_harness
 from agentforge_connectors.python_execution import PythonPolicy, PythonService, PythonSettings
 from agentforge_connectors.web import WebService
+from agentforge_connectors.workspace import workspace_policy, workspace_request
 from agentforge_core.browser import browser_tools
 from agentforge_core.models import RunErrorCode
+from agentforge_core.workspace import WORKSPACE_TOOLS
 from agentforge_runtime.attachment_tools import (
     READ_ATTACHMENT,
     WRITE_ATTACHMENT,
@@ -26,6 +28,7 @@ from agentforge_runtime.python_tools import with_python_tool
 from agentforge_runtime.skill_tools import SKILL_READ, with_skill_reader
 from agentforge_runtime.tools import BUILTIN_TOOLS, DEFAULT_TOOLS, ToolExecutor, ToolRegistry
 from agentforge_runtime.web_tools import with_web_tools
+from agentforge_runtime.workspace_tools import with_workspace_tools
 from agentforge_storage.repository import RunRepository
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -87,6 +90,10 @@ class Worker:
                         or PythonSettings.from_env().image != snapshot.python_image
                     ):
                         raise RuntimeFailure(RunErrorCode.TOOL_NOT_ALLOWED)
+                    if snapshot.workspace_enabled and not workspace_policy().permits(
+                        claim.run.scope
+                    ):
+                        raise RuntimeFailure(RunErrorCode.TOOL_NOT_ALLOWED)
                     return True
 
                 registry = self.tool_registry
@@ -137,9 +144,21 @@ class Worker:
                     registry = with_python_tool(
                         registry,
                         PythonService(claim.run.scope, snapshot.python_image, owns_execution),
+                        load_inputs=(lambda inputs: self.repository.python_inputs(claim, inputs))
+                        if snapshot.python_continuity
+                        else None,
                     )
-                    runtime_tools = (*runtime_tools, "python_execute@1")
-                    runtime_allowed = (*runtime_allowed, "python_execute@1")
+                    runtime_tools = (*runtime_tools, snapshot.python_tool)
+                    runtime_allowed = (*runtime_allowed, snapshot.python_tool)
+                if snapshot.workspace_enabled:
+                    registry = with_workspace_tools(
+                        registry,
+                        lambda tool, args: workspace_request(claim, tool, args),
+                        snapshot.workspace_mode,
+                    )
+                    runtime_tools = (*runtime_tools, *WORKSPACE_TOOLS)
+                    runtime_allowed = (*runtime_allowed, *WORKSPACE_TOOLS)
+                    allowed_reads = (*allowed_reads, "list_files@1", "attach_file@1")
                 if claim.run.input_files and snapshot.model.provider == "chat_completions":
                     registry = with_attachment_tools(
                         registry,
@@ -164,6 +183,7 @@ class Worker:
                     journal=RunToolJournal(self.repository, claim),
                     checkpoint=owns_execution,
                     read_allowed=allowed_reads,
+                    write_allowed=snapshot.approval_tools,
                 )
                 if snapshot.approval_tools:
                     executor.approvals = ApprovalExecution(self.repository, claim)

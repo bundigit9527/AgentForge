@@ -1,7 +1,7 @@
 import sqlalchemy as sa
 
 metadata = sa.MetaData()
-SCHEMA_REVISION = "0017"
+SCHEMA_REVISION = "0018"
 
 agents = sa.Table(
     "agents",
@@ -453,6 +453,22 @@ chat_artifacts = sa.Table(
     sa.CheckConstraint(
         "size BETWEEN 1 AND 10485760 AND length(data) = size", name="ck_chat_artifact_size"
     ),
+)
+
+
+artifact_revisions = sa.Table(
+    "artifact_revisions",
+    metadata,
+    sa.Column(
+        "artifact_id", sa.String(36), sa.ForeignKey("chat_artifacts.artifact_id"), primary_key=True
+    ),
+    sa.Column(
+        "family_id", sa.String(36), sa.ForeignKey("chat_artifacts.artifact_id"), nullable=False
+    ),
+    sa.Column("parent_id", sa.String(36), sa.ForeignKey("chat_artifacts.artifact_id")),
+    sa.Column("version", sa.Integer, nullable=False),
+    sa.UniqueConstraint("family_id", "version", name="uq_artifact_family_version"),
+    sa.CheckConstraint("version >= 1", name="ck_artifact_version"),
 )
 
 

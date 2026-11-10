@@ -249,6 +249,9 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
 
     desktop = mount_desktop(app, store, browser)
     mount_browser_execution(app, store, desktop)
+    from agentforge_api.workspace_execution import mount_workspace_execution
+
+    mount_workspace_execution(app, store, desktop)
     artifacts = ArtifactRepository(store)
     service = RakazoRepository(store)
     model_adapter = ModelRpcAdapter(store, model_configuration)
@@ -275,6 +278,9 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
             ),
         )
         config = prepare_python(scope, config)
+        from agentforge_connectors.workspace import prepare_workspace
+
+        config = prepare_workspace(scope, config)
         return skill_adapter.prepare_run(scope, text, config, connection=connection)
 
     def me(scope):
@@ -520,10 +526,7 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
         if procedure == "artifacts/getById":
             return artifacts.get(scope, str(ArtifactId.model_validate(data).artifactId))
         if procedure == "artifacts/listVersions":
-            item = artifacts.get(
-                scope, str(ArtifactFamily.model_validate(data).familyId), content=False
-            )
-            return [{k: item[k] for k in ("id", "version", "name", "createdAt")}]
+            return artifacts.versions(scope, str(ArtifactFamily.model_validate(data).familyId))
         if procedure == "threads/answer":
             body = AnswerApproval.model_validate(data)
             # Native callers target a Bot; resolve the caller's selected Thread first.

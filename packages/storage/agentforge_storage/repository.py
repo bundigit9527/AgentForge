@@ -271,6 +271,18 @@ class RunRepository:
                     file_block(files.row(connection, scope, ref, thread["agent_id"]))
                     for ref in _artifact_ids
                 ]
+                if config.workspace_enabled and thread is not None:
+                    config = config.model_copy(update={"workspace_mode": agent["computer_mode"]})
+                if config.python_continuity and thread is not None:
+                    from agentforge_storage.file_continuity import freeze_files
+
+                    config = config.model_copy(
+                        update={
+                            "python_files": freeze_files(
+                                self, connection, scope, thread, _artifact_ids, config
+                            )
+                        }
+                    )
                 statement = insert(runs).values(
                     input_files=blocks,
                     run_id=run_id,
@@ -541,6 +553,7 @@ class RunRepository:
         budget_bytes: int | None = None,
         before_bytes: int | None = None,
         after_bytes: int | None = None,
+        truncated_tool_results: int = 0,
     ) -> bool:
         byte_stats = (budget_bytes, before_bytes, after_bytes)
         has_bytes = any(value is not None for value in byte_stats)
@@ -553,15 +566,30 @@ class RunRepository:
             raise ValueError("Invalid context trimming byte statistics")
         # Either independent limit can trigger trimming. Chinese text may fit the
         # character budget but exceed UTF-8 bytes; audit must accept that decision.
-        values = (step, budget_chars, before_chars, after_chars, dropped_turns, retained_turns)
+        values = (
+            step,
+            budget_chars,
+            before_chars,
+            after_chars,
+            dropped_turns,
+            retained_turns,
+            truncated_tool_results,
+        )
         if (
             any(type(value) is not int for value in values)
             or not 1 <= step <= 32
-            or not 4000 <= budget_chars <= 200000
+            or not 4000 <= budget_chars <= 2147483647
             or not 0 <= after_chars <= budget_chars
             or before_chars < 0
-            or not (before_chars > budget_chars or (has_bytes and before_bytes > budget_bytes))
-            or not 1 <= dropped_turns <= 20
+            or not (
+                before_chars > budget_chars
+                or (has_bytes and before_bytes > budget_bytes)
+                or truncated_tool_results > 0
+            )
+            or not 0 <= truncated_tool_results <= 1024
+            or (truncated_tool_results > 0 and after_chars >= before_chars)
+            or not 0 <= dropped_turns <= 20
+            or (dropped_turns == 0 and truncated_tool_results == 0)
             or not 0 <= retained_turns <= 20 - dropped_turns
         ):
             raise ValueError("Invalid context trimming statistics")
@@ -576,6 +604,11 @@ class RunRepository:
                 "after_chars": after_chars,
                 "dropped_turns": dropped_turns,
                 "retained_turns": retained_turns,
+                **(
+                    {"truncated_tool_results": truncated_tool_results}
+                    if truncated_tool_results
+                    else {}
+                ),
                 **(
                     {
                         "budget_bytes": budget_bytes,
@@ -706,6 +739,11 @@ class RunRepository:
                 .mappings()
                 .all()
             )
+
+    def python_inputs(self, claim, inputs):
+        from agentforge_storage.file_continuity import load_inputs
+
+        return load_inputs(self, claim, inputs)
 
     def read_attachment(self, claim, ref, offset):
         if ref not in {block["artifactId"] for block in claim.run.input_files}:
@@ -863,11 +901,15 @@ class RunRepository:
 
                 if (
                     error_code
-                    or call["name"] != "python_execute"
+                    or call["name"] not in {"python_execute", "attach_file"}
+                    or (
+                        call["name"] == "attach_file"
+                        and not claim.run.execution_config.workspace_enabled
+                    )
                     or not claim.run.execution_config.python_image
                 ):
                     raise ValueError("Generated files require Python execution authorization")
-                save_generated_files(connection, row, ticket.tool_call_id, files)
+                save_generated_files(connection, row, ticket.tool_call_id, files, call["arguments"])
             if error_code is None and call["name"] == "write_attachment" and row["input_files"]:
                 save_attachment_result(connection, row, call["arguments"])
             _event(

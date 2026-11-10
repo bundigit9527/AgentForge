@@ -197,3 +197,6 @@ Skill 仍是说明文档。Agent 同时绑定所需 MCP 工具时，技能可以
 ## Python 文件生成补充（2026-11-08）
 
 新增独立 Python 执行容器、PPT生成 Skill、二进制附件原子交付，继续使用原有 Python Harness 和原版 Rakazo Web。默认关闭并按用户授权；旧 Run 保持不变。脚本执行每次使用空目录，尚不复用 Team/Private 桌面文件或运行通用 Shell。配置、验收及 Rakazo 逐项差异见 [Python 自动文件生成](python-execution.md)。
+
+
+PPT 配方已发布 v2，配合 `python_execute@2` 读取确定的附件版本、按要求修改并保存新版本。旧 v1 配方仍可解析；目录只展示最新配方。新的文件目录和授权在 Run 提交时固定，Skill 不扩大读取范围。当前执行目录仍为临时目录，不复用桌面文件。详见 [文件连续编辑](python-execution.md#连续编辑与版本迁移-0018)。

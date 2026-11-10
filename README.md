@@ -53,7 +53,7 @@ uv run --locked --offline ruff format --check .
 uv run --locked --offline pytest
 ```
 
-上述命令不启动服务。默认模型模式为 `mock`；已实现可配置的 Chat Completions 路由适配器、多轮工具调用、可选流式回复及用量事件，通过模拟 HTTP 响应验证，真实企业路由仍待联调。已增加本地用户、空间角色、可撤销访问令牌和显式共享；默认仍为开发模式，多用户配置见 [本地身份与权限](docs/identity.md)。已增加 Rakazo 核心聊天的 oRPC 兼容入口、原版邮箱密码登录与浏览器会话。Rakazo 源码保持原版，适配与黑盒测试均放在 AgentForge。保存设置用于下一次 RPC 运行，清空同时取消当前任务，历史 Run 快照保留；需显式升级数据库至 `0017` 并由管理员配置 Web 登录。原版模型目录、用户默认模型和 Bot 模型选择已接通；DeepSeek 官方接口适配普通模式，已在临时 SQLite 库通过真实两轮聊天与工具回传验收。原版 Skill 目录、个人技能新建编辑删除及聊天显式选择已接通，内容按任务固定版本。完整产品功能、企业单点登录、长期记忆仍待接入，未实现接口返回明确错误。接入步骤见 [原版 Rakazo Web](docs/rakazo-web.md)。
+上述命令不启动服务。默认模型模式为 `mock`；已实现可配置的 Chat Completions 路由适配器、多轮工具调用、可选流式回复及用量事件，通过模拟 HTTP 响应验证，真实企业路由仍待联调。已增加本地用户、空间角色、可撤销访问令牌和显式共享；默认仍为开发模式，多用户配置见 [本地身份与权限](docs/identity.md)。已增加 Rakazo 核心聊天的 oRPC 兼容入口、原版邮箱密码登录与浏览器会话。Rakazo 源码保持原版，适配与黑盒测试均放在 AgentForge。保存设置用于下一次 RPC 运行，清空同时取消当前任务，历史 Run 快照保留；需显式升级数据库至 `0018` 并由管理员配置 Web 登录。原版模型目录、用户默认模型和 Bot 模型选择已接通；DeepSeek 官方接口适配普通模式，已在临时 SQLite 库通过真实两轮聊天与工具回传验收。原版 Skill 目录、个人技能新建编辑删除及聊天显式选择已接通，内容按任务固定版本。完整产品功能、企业单点登录、长期记忆仍待接入，未实现接口返回明确错误。接入步骤见 [原版 Rakazo Web](docs/rakazo-web.md)。
 
 ## 项目目标
 
@@ -242,3 +242,7 @@ Python Harness 已支持通过官方 MCP Python SDK 调用配置好的远程 Str
 
 
 可选的 [Python 自动文件生成](docs/python-execution.md) 支持 Harness 自动读取 PPT Skill、在独立离线容器运行代码并返回可编辑 PPT 附件。默认关闭，需为实际用户配置授权及执行镜像。
+
+文件连续编辑：Python Harness 可读取当前会话的确定附件版本，修改后交付新版本，保留原文件；原版 Rakazo 附件版本列表已接通。PPT Skill v2 与手工验收见 [Python 文件生成与修改](docs/python-execution.md)。
+
+电脑文件互通：已接通 `list_files`、`attach_file` 和经审批的附件保存，复用 Team／Private 电脑与持久工作区；完整差异、配置和测试见 [Rakazo 文件能力对标](docs/workspace-bridge.md)。

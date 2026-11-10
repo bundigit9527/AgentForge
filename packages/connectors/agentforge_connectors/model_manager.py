@@ -5,6 +5,7 @@ from dataclasses import replace
 from uuid import uuid4
 
 from agentforge_core.execution import ExecutionSnapshot
+from agentforge_core.model_limits import connect_window, connection_window
 from agentforge_core.model_management import ModelManagementError
 from agentforge_runtime.chat_model import ChatCompletionsModel
 from agentforge_runtime.config import ModelSettings
@@ -34,19 +35,24 @@ class ModelManager:
         with self.repo.connection(scope, write=True):
             pass
 
-    def configured(self, row, *, key="", require_key=False):
+    def configured(self, row, *, key="", require_key=False, model=None):
         config = row["configuration"]
+        model = model or config["modelId"]
+        window = connection_window(row["provider"], config, model)
+        budget = window - config["maxTokens"]
         return ModelSettings(
             provider="chat_completions",
             base_url=config["baseUrl"],
             api_key=key,
-            model=config["modelId"],
+            model=model,
             allowed_models=tuple(config["models"]),
             api_style=config["apiStyle"],
             stream=self.settings.stream,
             context_policy="trim_history",
-            context_max_chars=self.settings.context_max_chars,
-            context_max_bytes=config["contextWindow"] - config["maxTokens"],
+            context_max_chars=max(4000, budget),
+            context_max_bytes=budget,
+            context_window_tokens=window,
+            compact_tool_results=True,
             timeout_seconds=self.settings.timeout_seconds,
             max_rounds=self.settings.max_rounds,
             max_completion_tokens=config["maxTokens"],
@@ -62,7 +68,7 @@ class ModelManager:
         row = self.repo.get(scope, provider, connection)
         if row is None or model not in row["configuration"]["models"]:
             raise ModelManagementError("Connect this model for your account first")
-        return replace(self.configured(row), model=model)
+        return self.configured(row, model=model)
 
     def default(self, scope, *, connection=None):
         row = self.repo.choice(scope, connection)
@@ -100,7 +106,7 @@ class ModelManager:
         else:
             key = body.apiKey
         maximum = body.maxTokens if body.maxTokens is not None else previous.get("maxTokens", 4096)
-        window = body.contextWindow or previous.get("contextWindow", 32768)
+        window, window_source = connect_window(body, previous)
         if window - maximum < 1024:
             raise ModelManagementError("Maximum output must leave at least 1024 tokens for input")
         models = (
@@ -125,6 +131,7 @@ class ModelManager:
                 hasKey=bool(key),
                 maxTokens=maximum,
                 contextWindow=window,
+                contextWindowSource=window_source,
                 apiStyle="deepseek" if base in {DEEPSEEK, DEEPSEEK + "/v1"} else "compatible",
             ),
         )
@@ -166,7 +173,9 @@ class ModelManager:
             thinkingLevels=[],
             supportsImages=False,
             maxTokens=config["maxTokens"],
-            contextWindow=config["contextWindow"],
+            contextWindow=connection_window(
+                row["provider"], config, choice["model_id"] if is_default else config["modelId"]
+            ),
             authKind="openai_compatible" if row["provider"] == "openai-compatible" else "api_key",
         )
 

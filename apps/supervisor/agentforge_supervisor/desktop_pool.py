@@ -22,6 +22,7 @@ from agentforge_supervisor.archived_files import browse
 from agentforge_supervisor.browser_pool import BrowserPool
 from agentforge_supervisor.desktop import docker, running_desktop
 from agentforge_supervisor.desktop_slot import execute_workspace
+from agentforge_supervisor.workspace_bridge import transfer
 from agentforge_supervisor.workspace_checkpoint import CheckpointError, WorkspaceCheckpoint
 
 
@@ -216,6 +217,17 @@ class DesktopPool:
             if entry and params == [entry["generation"]]:
                 return self.idle_action(path, entry["generation"], action)
             return {"ready": False}
+        if action == "workspace":
+            generation, body = params
+            if not entry or generation != entry["generation"]:
+                return {"error": "desktop_changed"}
+            if (not user) != ("workspaceBot" in body["request"]):
+                raise ValueError("Wrong workspace scope")
+            self.finish_checkpoint(path)
+            result = transfer(generation, body)
+            if body["action"] == "saveArtifact" and "result" in result:
+                self.save(path, generation)
+            return result
         if action == "browser":
             generation, request = params
             if not entry or generation != entry["generation"]:
@@ -277,6 +289,9 @@ def main():
                 pool.periodic()
 
     def stop(*_):
+        # Process-group shutdown and the launcher may both forward SIGTERM.
+        # Do not interrupt checkpoint/relay cleanup after it has started.
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
         raise SystemExit()
 
     with open(endpoint.with_suffix(".lock"), "a") as lock:

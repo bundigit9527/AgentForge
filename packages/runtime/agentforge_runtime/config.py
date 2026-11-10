@@ -19,6 +19,8 @@ class ModelSettings:
     connection_revision: int | None = None
     catalog_provider: str | None = None
     context_max_bytes: int | None = None
+    compact_tool_results: bool = False
+    context_window_tokens: int | None = None
     stream: bool = False
     context_policy: str = "trim_history"
     context_max_chars: int = 100000
@@ -30,7 +32,8 @@ class ModelSettings:
     def __post_init__(self) -> None:
         if self.context_policy not in {"reject", "trim_history"}:
             raise ValueError("AGENTFORGE_MODEL_CONTEXT_POLICY must be reject or trim_history")
-        if type(self.context_max_chars) is not int or not 4000 <= self.context_max_chars <= 200000:
+        maximum = 2147483647 if self.compact_tool_results else 200000
+        if type(self.context_max_chars) is not int or not 4000 <= self.context_max_chars <= maximum:
             raise ValueError("AGENTFORGE_MODEL_CONTEXT_MAX_CHARS must be between 4000 and 200000")
         if type(self.stream) is not bool:
             raise ValueError("AGENTFORGE_MODEL_STREAM must be true or false")
@@ -114,6 +117,7 @@ class ModelSettings:
             raise ValueError("AGENTFORGE_MODEL_STREAM must be true or false")
         return cls(
             stream=streaming == "true",
+            compact_tool_results=True,
             context_policy=os.environ.get("AGENTFORGE_MODEL_CONTEXT_POLICY", "trim_history"),
             context_max_chars=context_chars,
             provider=os.environ.get("AGENTFORGE_MODEL_PROVIDER", "mock"),
@@ -153,6 +157,8 @@ class ModelSettings:
             connection_revision=self.connection_revision,
             catalog_provider=self.catalog_provider,
             context_max_bytes=self.context_max_bytes,
+            compact_tool_results=self.compact_tool_results if self.provider != "mock" else False,
+            context_window_tokens=self.context_window_tokens,
             provider=self.provider,
             api_style=self.api_style,
             stream=self.stream if self.provider == "chat_completions" else False,
@@ -195,6 +201,8 @@ class ModelSettings:
             context_policy=snapshot.context_policy,
             context_max_chars=snapshot.context_max_chars,
             context_max_bytes=snapshot.context_max_bytes,
+            compact_tool_results=snapshot.compact_tool_results,
+            context_window_tokens=snapshot.context_window_tokens,
             timeout_seconds=snapshot.timeout_seconds,
             max_rounds=snapshot.max_rounds,
             max_completion_tokens=snapshot.max_completion_tokens,

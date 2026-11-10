@@ -31,7 +31,9 @@ class RunResponse(BaseModel):
         config = run.execution_config
         if config is not None and viewer is not None and viewer != run.scope:
             # Sharing a result is not sharing all the owner's discoverable skill recipes.
-            config = config.model_copy(update={"catalog_skills": (), "catalog_omitted": 0})
+            config = config.model_copy(
+                update={"catalog_skills": (), "catalog_omitted": 0, "python_files": ()}
+            )
         return cls(
             run_id=run.run_id,
             status=run.status,

@@ -20,7 +20,7 @@ def mount_python(app, image):
             data = bytearray()
             async for part in request.stream():
                 data.extend(part)
-                if len(data) > 100000:
+                if len(data) > 14_100_000:
                     return JSONResponse({"error": "input_too_large"}, status_code=413)
             payload = PythonJob.model_validate_json(data).model_dump()
             if payload["image"] != image:

@@ -17,9 +17,9 @@ from agentforge_worker.worker import Worker
 from tests.model_support import completion, model_settings, tool_call
 
 
-@pytest.fixture
-def flow(repository, scope):
-    settings = model_settings()
+@pytest.fixture(params=[False, True])
+def flow(repository, scope, request):
+    settings = model_settings(compact_tool_results=request.param)
     conversations = ConversationRepository(repository.engine, repository.clock)
     config = ExecutionSnapshot(model=settings.snapshot(), approval_tools=("example_report@1",))
     agent = conversations.create_agent(scope, "Approval", config)
@@ -189,7 +189,7 @@ def test_native_answer_endpoint_and_stale_targets(flow, repository, scope, clien
 
 def test_many_pauses_do_not_exhaust_crash_retries(flow, repository, scope, clock):
     _, approvals, _, run, _ = flow
-    settings = model_settings()
+    settings = model_settings(compact_tool_results=run.execution_config.model.compact_tool_results)
     count = 0
 
     def respond(request):

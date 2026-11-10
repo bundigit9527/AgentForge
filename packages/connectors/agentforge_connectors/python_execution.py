@@ -88,7 +88,15 @@ def prepare_python(scope, snapshot):
     image = None
     if snapshot.model.provider == "chat_completions" and PythonPolicy.from_env().permits(scope):
         image = PythonSettings.from_env().image
-    return ExecutionSnapshot.model_validate({**snapshot.model_dump(), "python_image": image})
+    legacy = any("python_execute@1" in s.manifest.required_tools for s in snapshot.skills)
+    return ExecutionSnapshot.model_validate(
+        {
+            **snapshot.model_dump(),
+            "python_image": image,
+            "python_continuity": bool(image) and not legacy,
+            "python_files": (),
+        }
+    )
 
 
 class PythonService:

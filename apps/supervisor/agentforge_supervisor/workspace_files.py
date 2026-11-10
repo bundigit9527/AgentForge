@@ -1,6 +1,7 @@
 """Fixed program executed inside the desktop. All paths are relative to its workspace mount."""
 
 import base64
+import hashlib
 import json
 import os
 import secrets
@@ -26,6 +27,10 @@ def path_parts(action, path):
 def operate(action, request, root="/workspace"):
     path = request["path"]
     parts = path_parts(action, path)
+    if action == "saveArtifact":
+        expected = ["artifacts", str(UUID(request["artifactId"])), request["name"]]
+        if parts != expected or len(parts) != 3:
+            raise ValueError("Invalid artifact destination")
     with ExitStack() as resources:
         parent = os.open(root, DIR)
         resources.callback(os.close, parent)
@@ -38,6 +43,11 @@ def operate(action, request, root="/workspace"):
             parent = os.open(name, DIR, dir_fd=parent)
             resources.callback(os.close, parent)
         for part in parts if action == "files" else parts[:-1]:
+            if action == "saveArtifact":
+                try:
+                    os.mkdir(part, 0o700, dir_fd=parent)
+                except FileExistsError:
+                    pass
             parent = os.open(part, DIR, dir_fd=parent)
             resources.callback(os.close, parent)
         if action == "files":
@@ -63,6 +73,38 @@ def operate(action, request, root="/workspace"):
                         )
             return sorted(results, key=lambda item: item["path"])
         name = parts[-1]
+        if action == "saveArtifact":
+            data = base64.b64decode(request["contentBase64"], validate=True)
+            digest = hashlib.sha256(data).hexdigest()
+            if not 0 < len(data) <= MAX_FILE or request["sha256"] != digest:
+                raise ValueError("Invalid artifact bytes")
+            tmp = ".af-artifact-" + secrets.token_hex(16)
+            fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600, dir_fd=parent)
+            try:
+                with os.fdopen(fd, "wb") as out:
+                    out.write(data)
+                    out.flush()
+                    os.fsync(out.fileno())
+                try:
+                    os.link(tmp, name, src_dir_fd=parent, dst_dir_fd=parent, follow_symlinks=False)
+                except FileExistsError:
+                    existing = os.open(
+                        name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent
+                    )
+                    with os.fdopen(existing, "rb") as src:
+                        meta = os.fstat(src.fileno())
+                        if (
+                            not stat.S_ISREG(meta.st_mode)
+                            or meta.st_size != len(data)
+                            or src.read(MAX_FILE + 1) != data
+                        ):
+                            raise ValueError(
+                                "Desktop copy already changed; refusing overwrite"
+                            ) from None
+                os.fsync(parent)
+            finally:
+                os.unlink(tmp, dir_fd=parent)
+            return {"path": path, "size": len(data), "sha256": digest}
         if action == "uploadFile":
             data = base64.b64decode(request["contentBase64"], validate=True)
             if len(data) > MAX_FILE:
