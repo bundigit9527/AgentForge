@@ -1,12 +1,20 @@
 """Frozen file discovery and lease-bound immutable revisions, without filesystem sharing."""
 
 import base64
+import hashlib
+import json
+from dataclasses import replace
 from uuid import UUID
 
 import sqlalchemy as sa
-from agentforge_core.attachments import MAX_FILE
+from agentforge_core.attachments import MAX_FILE, artifact_name_key
 from agentforge_core.models import RunNotFound, Scope
-from agentforge_core.python_execution import FileReference, InputFile
+from agentforge_core.python_execution import (
+    WORKSPACE_FILE_MIMES,
+    FileReference,
+    InputFile,
+    output_name,
+)
 
 from agentforge_storage.artifacts import ArtifactRepository
 from agentforge_storage.authorization import owned
@@ -63,8 +71,7 @@ def freeze_files(store, conn, scope, thread, explicit, config):
             continue
         seen.add(row["family_id"])
         name = row["name"]
-        if len(name) > 128 or name.startswith("_agentforge_"):
-            name = "input-" + row["artifact_id"] + "." + name.rsplit(".", 1)[-1][:12]
+        name = input_filename(row)
         item = FileReference(
             artifact_id=ref,
             name=name,
@@ -109,13 +116,28 @@ def load_inputs(store, claim, inputs):
     return result
 
 
-def prepare_revisions(conn, run, files, arguments):
+def prepare_revisions(conn, run, files, arguments, *, named=False, aligned=False):
     config = run["execution_config"]
     versioned = [f for f in files if f.artifact_id or f.parent_id]
     if not versioned:
         return {}
     if not config.get("python_continuity") or any(not f.artifact_id for f in files):
         raise ValueError("Versioned publication requires continuity")
+    if named:
+        from agentforge_core.workspace import NamedImportFile
+
+        args = NamedImportFile.model_validate(arguments)
+        if not config.get("workspace_file_tools") or len(files) != 1:
+            raise ValueError("Named publication requires the new workspace snapshot")
+        if any(f.display_name != args.name or f.description != args.description for f in files):
+            raise ValueError("Publication metadata differs from the recorded invocation")
+        expected_parent = named_parent_id(conn, run, args.name) if args.name else None
+        if files[0].parent_id != expected_parent:
+            raise ValueError("Named parent differs from the available exact version")
+    elif not aligned and any(
+        f.display_name is not None or f.description is not None for f in files
+    ):
+        raise ValueError("Only named attachments can supply publication metadata")
     inputs = {
         i.name: i.artifact_id
         for i in [InputFile.model_validate(i) for i in arguments.get("inputs", [])]
@@ -125,7 +147,7 @@ def prepare_revisions(conn, run, files, arguments):
     parents = {}
     for file in versioned:
         UUID(file.artifact_id)
-        if file.parent_id != inputs.get(file.name):
+        if not named and not aligned and file.parent_id != inputs.get(file.name):
             raise ValueError("Revision parent must be the exact input alias")
         if not file.parent_id:
             continue
@@ -157,7 +179,7 @@ def prepare_revisions(conn, run, files, arguments):
             if legacy is None:
                 raise RunNotFound()
             continue
-        if file.parent_id not in allowed and parent["run_id"] != run["run_id"]:
+        if not aligned and file.parent_id not in allowed and parent["run_id"] != run["run_id"]:
             raise RunNotFound()
         family = (
             conn.execute(
@@ -205,3 +227,124 @@ def save_revision(conn, artifact_id, parent_id, family):
             version=version,
         )
     )
+
+
+def input_filename(row):
+    name = row["name"]
+    try:
+        InputFile.valid_name(name)
+        output_name(name, workspace=True)
+        if WORKSPACE_FILE_MIMES["." + name.rsplit(".", 1)[-1].lower()] != row["mime_type"]:
+            raise ValueError("Display title has a different file type")
+        return name
+    except ValueError:
+        suffix = next(
+            (s for s, mime in WORKSPACE_FILE_MIMES.items() if mime == row["mime_type"]), ".txt"
+        )
+        return "input-" + row["artifact_id"] + suffix
+
+
+def prepare_named_publication(conn, run, files, arguments):
+    """Allocate by owner/Bot name inside complete_tool's transaction, including first publish."""
+    from agentforge_core.workspace import AlignedImportFile
+
+    args = AlignedImportFile.model_validate(arguments)
+    if not run["execution_config"].get("workspace_file_alignment") or len(files) != 1:
+        raise ValueError("Aligned publication requires the new workspace snapshot")
+    file = files[0]
+    name = args.name or args.path.rsplit("/", 1)[-1]
+    if (
+        file.display_name != name
+        or file.description != args.description
+        or file.name != args.path.rsplit("/", 1)[-1]
+        or file.parent_id is not None
+    ):
+        raise ValueError("Publication metadata differs from the recorded invocation")
+    scope = Scope(run["tenant_id"], run["space_id"], run["user_id"])
+    key = artifact_name_key(name)
+    if conn.dialect.name == "postgresql":
+        identity = json.dumps(
+            [
+                "attachment-name",
+                scope.tenant_id,
+                scope.space_id,
+                scope.user_id,
+                run["agent_id"],
+                key,
+            ]
+        ).encode()
+        lock_id = int.from_bytes(hashlib.sha256(identity).digest()[:8], "big", signed=True)
+        conn.execute(sa.text("SELECT pg_advisory_xact_lock(:key)"), {"key": lock_id})
+    # SQLite complete_tool already acquired its write lock before reaching this lookup.
+    parent = conn.execute(
+        sa.select(chat_artifacts.c.artifact_id)
+        .outerjoin(
+            artifact_revisions, artifact_revisions.c.artifact_id == chat_artifacts.c.artifact_id
+        )
+        .where(
+            owned(chat_artifacts, scope),
+            chat_artifacts.c.agent_id == run["agent_id"],
+            chat_artifacts.c.name_key == key,
+        )
+        .order_by(
+            sa.func.coalesce(artifact_revisions.c.version, 1).desc(),
+            chat_artifacts.c.created_at.desc(),
+            chat_artifacts.c.artifact_id,
+        )
+        .limit(1)
+    ).scalar_one_or_none()
+    return (replace(file, parent_id=parent),)
+
+
+def named_parent_id(conn, run, name):
+    """Search only frozen available versions and this run's publications, never other chats."""
+    allowed = [f["artifact_id"] for f in run["execution_config"].get("python_files", [])]
+    scope = Scope(run["tenant_id"], run["space_id"], run["user_id"])
+    base = chat_artifacts.alias("family_root")
+    rows = (
+        conn.execute(
+            sa.select(chat_artifacts.c.artifact_id)
+            .outerjoin(
+                artifact_revisions, artifact_revisions.c.artifact_id == chat_artifacts.c.artifact_id
+            )
+            .outerjoin(
+                base,
+                base.c.artifact_id
+                == sa.func.coalesce(artifact_revisions.c.family_id, chat_artifacts.c.artifact_id),
+            )
+            .where(
+                owned(chat_artifacts, scope),
+                chat_artifacts.c.agent_id == run["agent_id"],
+                sa.or_(
+                    chat_artifacts.c.artifact_id.in_(allowed),
+                    chat_artifacts.c.run_id == run["run_id"],
+                ),
+                sa.or_(chat_artifacts.c.name == name, base.c.name == name),
+            )
+            .order_by(
+                sa.func.coalesce(artifact_revisions.c.version, 1).desc(),
+                chat_artifacts.c.created_at.desc(),
+                chat_artifacts.c.artifact_id,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return rows[0] if rows else None
+
+
+def named_parent(store, claim, name):
+    with store.engine.connect() as conn:
+        if not conn.execute(
+            sa.select(runs.c.run_id).where(store._owned(claim, store.clock()))
+        ).first():
+            raise RunNotFound()
+        run = dict(
+            run_id=claim.run.run_id,
+            agent_id=claim.run.agent_id,
+            tenant_id=claim.run.scope.tenant_id,
+            space_id=claim.run.scope.space_id,
+            user_id=claim.run.scope.user_id,
+            execution_config=claim.run.execution_config.model_dump(),
+        )
+        return named_parent_id(conn, run, name)

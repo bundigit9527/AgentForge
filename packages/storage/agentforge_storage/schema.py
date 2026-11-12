@@ -1,7 +1,7 @@
 import sqlalchemy as sa
 
 metadata = sa.MetaData()
-SCHEMA_REVISION = "0018"
+SCHEMA_REVISION = "0019"
 
 agents = sa.Table(
     "agents",
@@ -444,12 +444,14 @@ chat_artifacts = sa.Table(
     sa.Column("nonce", sa.String(66)),
     sa.Column("fingerprint", sa.String(64), nullable=False),
     sa.Column("name", sa.String(255), nullable=False),
+    sa.Column("name_key", sa.String(64)),
     sa.Column("description", sa.String(280)),
     sa.Column("mime_type", sa.String(128), nullable=False),
     sa.Column("size", sa.Integer, nullable=False),
     sa.Column("data", sa.LargeBinary, nullable=False),
     sa.Column("created_at", sa.Float, nullable=False),
     sa.UniqueConstraint("tenant_id", "space_id", "user_id", "nonce", name="uq_chat_artifact_nonce"),
+    sa.Index("ix_chat_artifact_name", "tenant_id", "space_id", "user_id", "agent_id", "name_key"),
     sa.CheckConstraint(
         "size BETWEEN 1 AND 10485760 AND length(data) = size", name="ck_chat_artifact_size"
     ),

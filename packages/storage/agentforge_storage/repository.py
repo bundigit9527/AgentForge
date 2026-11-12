@@ -909,7 +909,19 @@ class RunRepository:
                     or not claim.run.execution_config.python_image
                 ):
                     raise ValueError("Generated files require Python execution authorization")
-                save_generated_files(connection, row, ticket.tool_call_id, files, call["arguments"])
+                save_generated_files(
+                    connection,
+                    row,
+                    ticket.tool_call_id,
+                    files,
+                    call["arguments"],
+                    named=call["name"] == "attach_file"
+                    and call["version"] == 2
+                    and claim.run.execution_config.workspace_file_tools,
+                    aligned=call["name"] == "attach_file"
+                    and call["version"] == 3
+                    and claim.run.execution_config.workspace_file_alignment,
+                )
             if error_code is None and call["name"] == "write_attachment" and row["input_files"]:
                 save_attachment_result(connection, row, call["arguments"])
             _event(

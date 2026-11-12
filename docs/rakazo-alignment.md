@@ -1,6 +1,6 @@
 # 与 Rakazo 对齐的架构基线
 
-核查日期为 2026-11-08。比较对象为本地 Rakazo 原版 `d165de43` 与 AgentForge 迁移 `0017` 对应的实现。Rakazo 一侧按源码核对，AgentForge 一侧区分了本机联调、自动化回归和待验收能力。
+更新日期为2026-11-12。原版Web兼容基线为Rakazo `d165de43`，本轮文件实现核查本地源码`9218c401`；AgentForge目标迁移为`0019`。各段历史验收保留当时范围，不代表后续增量已经过真实环境验收。
 
 P0 收口、真实 Web / 模型 / 桌面验收和配置说明见 [P0 记录](p0-acceptance.md)。本轮联网工具回归通过 SQLite 704 项（12 项跳过）和 PostgreSQL 716 项（包含原版客户端互操作）；真实 DeepSeek 搜索与读取验收见 [联网工具](web-tools.md)。这些结果不代表 Ubuntu 生产验收。
 
@@ -23,7 +23,7 @@ P0 收口、真实 Web / 模型 / 桌面验收和配置说明见 [P0 记录](p0-
 | Activity 与执行记录 | 原版 runs.list、工具步骤及会话事件回放 | 已接通当前用户的活动列表和最近 20 条记录；成功工具保存次数与耗时，失败／中断明确提示，刷新可恢复。尚未实现独立业务 Task 和 Routine。 |
 | 联网搜索与抓取 | 内置 web_search / web_fetch，默认 DuckDuckGo，无需 Computer | Python Worker 已接入同名工具和统一审计；支持 DuckDuckGo 与 Bing RSS，按用户授权访问公开 HTTPS，来源正文为不可信资料。默认关闭；本机已用 Bing RSS + DeepSeek 验收。无 HTTP 明文、登录、JavaScript、PDF 或实时行情专用数据源。 |
 | 浏览器 | 通用浏览器工具提供导航、观察和页面操作 | 新增 Python browser_open / browser_observe / browser_follow，按 Run 授权驱动所属 Computer 的可见 Chromium。支持公网 HTTPS 或指定来源的匿名 HTML 分段读取、查找、滚动和链接点击；无 JavaScript、表单输入与登录态复用，尚未达到 Rakazo 的完整浏览器能力。固定财经工具保留。 |
-| 产物与记忆 | 文件产物、版本和 MemoryProvider | 经审批的 CSV 可持久化，在聊天中显示文件卡片，并可由所有者下载。Bot 聊天支持上传、仅附件发送、本轮按授权读取及生成文本结果文件。每个文件目前为独立版本；同名文件版本管理、长期记忆与企业知识检索待实现。 |
+| 产物与记忆 | 文件产物、版本和 MemoryProvider | 已支持Python生成Office等文件、确定版本连续编辑、电脑文本读写和聊天附件互通。新attach_file@3按同用户／Bot历史名称归族，write_file@2自动创建目录；HTML/GIF/WebP等格式已补齐。长期记忆、企业知识检索、桌面打开及视觉核验待实现。[文件对标](workspace-bridge.md) |
 
 Rakazo 对照入口为 `apps/api/src/router.ts`、`apps/worker/src/index.ts` 和 `packages/adapters/src/` 下的 `pi-runtime.ts`、`approval-effect.ts`、`sandbox-factory.ts`、`browser-tools.ts`。AgentForge 对应入口包括 [oRPC 路由](../apps/api/agentforge_api/orpc.py)、[Python Harness](../packages/runtime/agentforge_runtime/chat_harness.py)、[桌面代理](../apps/api/agentforge_api/desktop.py)、[财经网页工具](../apps/supervisor/agentforge_supervisor/visible_news.py) 和 [文件产物存储](../packages/storage/agentforge_storage/artifacts.py)。
 
@@ -123,7 +123,7 @@ Docker 交付采用外部 PostgreSQL、独立 API / Worker 和持有 Docker sock
 
 ## 电脑文件链路补充（2026-11-08）
 
-已接通原版语义的目录列举、电脑文件转聊天附件；增加经原版审批的附件保存到当前Bot电脑，复用Team/Private和工作区快照，真实电脑重启后文件可恢复。Python仍在临时执行容器生成，尚未实现通用Shell、图形打开、命名attach_file归族及Team全局shared目录。逐项源码映射与后续顺序见 [文件能力对标](workspace-bridge.md)。
+已接通原版语义的目录列举、电脑文件转聊天附件；增加经原版审批的附件保存到当前Bot电脑，复用Team/Private和工作区快照，真实电脑重启后文件可恢复。Python仍在临时执行容器生成，2026-11-11增加受审批的read_file/write_file与attach_file@2命名归族（限本Run和冻结可用附件）；尚未实现通用Shell、图形打开及Team全局shared目录。逐项源码映射与后续顺序见 [文件能力对标](workspace-bridge.md)。
 
 
 ### 2026-11-10：模型窗口与工具上下文

@@ -17,8 +17,8 @@ from agentforge_connectors.workspace import workspace_policy
 from agentforge_core.identity import PermissionDenied
 from agentforge_core.models import RunConflict, RunNotFound
 from agentforge_core.python_execution import output_name
-from agentforge_core.workspace import ARGUMENTS
-from agentforge_storage.file_continuity import allowed_file
+from agentforge_core.workspace import argument_model
+from agentforge_storage.file_continuity import allowed_file, input_filename
 from agentforge_storage.workspace import dispatched_tool
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -30,7 +30,7 @@ class RequestBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     runId: UUID
     attemptId: UUID
-    tool: Literal["workspace_save", "attach_file", "list_files"]
+    tool: Literal["workspace_save", "attach_file", "list_files", "read_file", "write_file"]
     arguments: dict
 
 
@@ -62,7 +62,7 @@ def mount_workspace_execution(app, store, directory):
             async with asyncio.timeout(5):
                 async for chunk in request.stream():
                     data.extend(chunk)
-                    if len(data) > 8192:
+                    if len(data) > 100000:
                         raise ValueError()
             return model.model_validate_json(data)
         except (ValueError, TimeoutError):
@@ -78,7 +78,10 @@ def mount_workspace_execution(app, store, directory):
             and workspace_policy().permits(claim.run.scope)
             and PythonPolicy.from_env().permits(claim.run.scope)
             and PythonSettings.from_env().image == config.python_image
-            and (tool != "workspace_save" or arguments["computer_mode"] == config.workspace_mode)
+            and (
+                tool not in {"workspace_save", "write_file"}
+                or arguments["computer_mode"] == config.workspace_mode
+            )
             and dispatched_tool(store, claim, tool, arguments)
         )
 
@@ -108,8 +111,18 @@ def mount_workspace_execution(app, store, directory):
         return {"ok": True}
 
     def execute(body):
-        arguments = ARGUMENTS[body.tool].model_validate(body.arguments).model_dump()
         claim = store.active_claim(str(body.runId), str(body.attemptId))
+        if not claim or not claim.run.execution_config:
+            return error("workspace_not_allowed", 403)
+        arguments = (
+            argument_model(
+                body.tool,
+                claim.run.execution_config.workspace_file_tools,
+                claim.run.execution_config.workspace_file_alignment,
+            )
+            .model_validate(body.arguments)
+            .model_dump()
+        )
         if not valid(claim, body.tool, arguments):
             return error("workspace_not_allowed", 403)
         if not directory or not directory.pool:
@@ -150,7 +163,7 @@ def mount_workspace_execution(app, store, directory):
             if body.tool == "workspace_save":
                 with store.engine.connect() as conn:
                     row = allowed_file(store, conn, claim, arguments["artifact_id"])
-                name = output_name(row["name"])
+                name = input_filename(row)
                 action = "saveArtifact"
                 request = dict(
                     artifactId=row["artifact_id"],
@@ -159,6 +172,14 @@ def mount_workspace_execution(app, store, directory):
                     contentBase64=base64.b64encode(row["data"]).decode(),
                     sha256=hashlib.sha256(row["data"]).hexdigest(),
                 )
+            elif body.tool in {"read_file", "write_file"}:
+                action = "readText" if body.tool == "read_file" else "writeText"
+                if (
+                    body.tool == "write_file"
+                    and claim.run.execution_config.workspace_file_alignment
+                ):
+                    action = "writeTextV2"
+                request = {k: v for k, v in arguments.items() if k != "computer_mode"}
             else:
                 action = "downloadFile" if body.tool == "attach_file" else "files"
                 request = {"path": arguments["path"]}
@@ -178,13 +199,25 @@ def mount_workspace_execution(app, store, directory):
             ):
                 return error("workspace_not_allowed", 403)
             if "result" not in reply:
+                code = reply.get("error")
+                if body.tool in {"read_file", "write_file"} and code in {
+                    "workspace_file_changed",
+                    "workspace_file_unsupported",
+                    "workspace_file_missing",
+                }:
+                    return error(code)
                 return error("workspace_failed")
             result = reply["result"]
-            if body.tool == "workspace_save":
+            if body.tool in {"workspace_save", "write_file"}:
                 return {**result, "computer_mode": claim.run.execution_config.workspace_mode}
+            if body.tool == "read_file":
+                return result
             if body.tool == "attach_file":
                 return {
-                    "name": output_name(arguments["path"].rsplit("/", 1)[-1]),
+                    "name": output_name(
+                        arguments["path"].rsplit("/", 1)[-1],
+                        workspace=claim.run.execution_config.workspace_file_alignment,
+                    ),
                     "data": result["contentBase64"],
                 }
             # Fit metadata in the shared tool-result budget; file names remain untrusted data.

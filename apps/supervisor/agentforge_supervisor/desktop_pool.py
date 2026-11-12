@@ -225,7 +225,10 @@ class DesktopPool:
                 raise ValueError("Wrong workspace scope")
             self.finish_checkpoint(path)
             result = transfer(generation, body)
-            if body["action"] == "saveArtifact" and "result" in result:
+            if (
+                body["action"] in {"saveArtifact", "writeText", "writeTextV2"}
+                and "result" in result
+            ):
                 self.save(path, generation)
             return result
         if action == "browser":

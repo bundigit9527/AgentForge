@@ -12,7 +12,7 @@ from agentforge_connectors.web import WebService
 from agentforge_connectors.workspace import workspace_policy, workspace_request
 from agentforge_core.browser import browser_tools
 from agentforge_core.models import RunErrorCode
-from agentforge_core.workspace import WORKSPACE_TOOLS
+from agentforge_core.workspace import workspace_tools
 from agentforge_runtime.attachment_tools import (
     READ_ATTACHMENT,
     WRITE_ATTACHMENT,
@@ -29,6 +29,7 @@ from agentforge_runtime.skill_tools import SKILL_READ, with_skill_reader
 from agentforge_runtime.tools import BUILTIN_TOOLS, DEFAULT_TOOLS, ToolExecutor, ToolRegistry
 from agentforge_runtime.web_tools import with_web_tools
 from agentforge_runtime.workspace_tools import with_workspace_tools
+from agentforge_storage.file_continuity import named_parent
 from agentforge_storage.repository import RunRepository
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -155,10 +156,23 @@ class Worker:
                         registry,
                         lambda tool, args: workspace_request(claim, tool, args),
                         snapshot.workspace_mode,
+                        editing=snapshot.workspace_file_tools,
+                        aligned=snapshot.workspace_file_alignment,
+                        resolve_parent=lambda name: named_parent(self.repository, claim, name),
                     )
-                    runtime_tools = (*runtime_tools, *WORKSPACE_TOOLS)
-                    runtime_allowed = (*runtime_allowed, *WORKSPACE_TOOLS)
-                    allowed_reads = (*allowed_reads, "list_files@1", "attach_file@1")
+                    refs = workspace_tools(
+                        snapshot.workspace_file_tools, snapshot.workspace_file_alignment
+                    )
+                    runtime_tools = (*runtime_tools, *refs)
+                    runtime_allowed = (*runtime_allowed, *refs)
+                    allowed_reads = (
+                        *allowed_reads,
+                        *(
+                            r
+                            for r in refs
+                            if r.split("@")[0] in {"list_files", "attach_file", "read_file"}
+                        ),
+                    )
                 if claim.run.input_files and snapshot.model.provider == "chat_completions":
                     registry = with_attachment_tools(
                         registry,

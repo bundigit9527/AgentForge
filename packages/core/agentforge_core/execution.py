@@ -10,7 +10,7 @@ from agentforge_core.python_execution import FileReference
 from agentforge_core.reports import exports_csv
 from agentforge_core.skills import SkillReference, SkillSnapshot
 from agentforge_core.tools import ToolReferences
-from agentforge_core.workspace import WORKSPACE_TOOLS
+from agentforge_core.workspace import workspace_tools
 
 
 class ModelConfig(BaseModel):
@@ -77,6 +77,8 @@ class ExecutionSnapshot(BaseModel):
     python_continuity: bool = Field(default=False, strict=True)
     python_files: tuple[FileReference, ...] = Field(default=(), max_length=12)
     workspace_enabled: bool = Field(default=False, strict=True)
+    workspace_file_tools: bool = Field(default=False, strict=True)
+    workspace_file_alignment: bool = Field(default=False, strict=True)
     workspace_mode: Literal["team", "dedicated"] | None = None
     model_backups: tuple[ModelConfig, ...] = Field(default=(), max_length=10)
 
@@ -92,7 +94,11 @@ class ExecutionSnapshot(BaseModel):
     def tool_references(self) -> tuple[str, ...]:
         return (
             *self.tools,
-            *(WORKSPACE_TOOLS if self.workspace_enabled else ()),
+            *(
+                workspace_tools(self.workspace_file_tools, self.workspace_file_alignment)
+                if self.workspace_enabled
+                else ()
+            ),
             *((self.python_tool,) if self.python_image else ()),
             *(("web_fetch@1",) if self.web_origins else ()),
             *(("web_search@1",) if self.web_search_endpoint else ()),
@@ -106,6 +112,13 @@ class ExecutionSnapshot(BaseModel):
             not self.python_continuity or "workspace_save@1" not in self.approval_tools
         ):
             raise ValueError("Workspace tools require file continuity and save approval")
+        if self.workspace_file_alignment and not self.workspace_file_tools:
+            raise ValueError("Aligned file tools require workspace editing")
+        write_ref = "write_file@2" if self.workspace_file_alignment else "write_file@1"
+        if self.workspace_file_tools and (
+            not self.workspace_enabled or write_ref not in self.approval_tools
+        ):
+            raise ValueError("Workspace file editing requires workspace and write approval")
         if self.workspace_mode and not self.workspace_enabled:
             raise ValueError("Workspace mode requires workspace tools")
         if self.python_continuity and not self.python_image:

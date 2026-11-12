@@ -8,7 +8,14 @@ from agentforge_supervisor.desktop_slot import execute_workspace
 
 def transfer(generation, body):
     origin, token = service_configuration()
-    if body["action"] not in {"saveArtifact", "downloadFile", "files"}:
+    if body["action"] not in {
+        "saveArtifact",
+        "downloadFile",
+        "files",
+        "readText",
+        "writeText",
+        "writeTextV2",
+    }:
         return {"error": "workspace_invalid"}
     with httpx.Client(timeout=5, trust_env=False) as client:
 

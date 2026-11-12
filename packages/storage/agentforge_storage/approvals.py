@@ -103,6 +103,12 @@ class ApprovalRepository:
                             else "保存附件到私人电脑"
                         )
                         if request["tool_reference"] == "workspace_save@1"
+                        else (
+                            "写入团队电脑文件（同空间成员可见，按原文件摘要核对覆盖）"
+                            if request["arguments"].get("computer_mode") == "team"
+                            else "写入私人电脑文件（按原文件摘要核对覆盖）"
+                        )
+                        if request["tool_reference"] in {"write_file@1", "write_file@2"}
                         else "请确认调用工具：" + request["tool_reference"],
                         "detail": json.dumps(request, ensure_ascii=False, indent=2),
                         "status": "pending",

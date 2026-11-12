@@ -51,6 +51,17 @@ class ApprovalExecution:
             return json.dumps({"error": "User denied this operation. Do not retry or rephrase it."})
         if effect["status"] == "succeeded":
             return effect["result"]["content"]
+        known_file_errors = {
+            RunErrorCode.WORKSPACE_FILE_CHANGED,
+            RunErrorCode.WORKSPACE_FILE_MISSING,
+            RunErrorCode.WORKSPACE_FILE_UNSUPPORTED,
+        }
+        if (
+            ref in {"write_file@1", "write_file@2"}
+            and effect["status"] == "failed"
+            and effect["result"].get("error") in {c.value for c in known_file_errors}
+        ):
+            raise RuntimeFailure(RunErrorCode(effect["result"]["error"]))
         if effect["status"] != "approved":
             raise RuntimeFailure(RunErrorCode.EFFECT_UNCERTAIN)
         try:
@@ -58,6 +69,13 @@ class ApprovalExecution:
         except RunConflict:
             raise ExecutionStopped() from None
         # Unknown/exceptional outcomes deliberately remain dispatched. Never automatically replay.
-        result = executor.execute(invocation)
+        try:
+            result = executor.execute(invocation)
+        except RuntimeFailure as error:
+            if ref in {"write_file@1", "write_file@2"} and error.code in known_file_errors:
+                self.store.effects.complete(
+                    self.claim, eid, succeeded=False, result={"error": error.code.value}
+                )
+            raise
         self.store.effects.complete(self.claim, eid, succeeded=True, result={"content": result})
         return result

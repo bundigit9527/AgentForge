@@ -7,7 +7,7 @@ from dataclasses import asdict
 from uuid import uuid4
 
 import sqlalchemy as sa
-from agentforge_core.attachments import MAX_FILE
+from agentforge_core.attachments import MAX_FILE, artifact_name_key
 from agentforge_core.models import RunConflict, RunNotFound, Scope
 
 from agentforge_storage.authorization import owned
@@ -261,6 +261,7 @@ def store_file(
                 nonce=nonce,
                 fingerprint=fingerprint,
                 name=name,
+                name_key=artifact_name_key(name),
                 mime_type=mime,
                 description=description,
                 size=len(data),
@@ -335,8 +336,13 @@ def save_attachment_result(conn, run, args):
         )
 
 
-def save_generated_files(conn, run, call_id, files, arguments):
-    from agentforge_core.python_execution import FILE_MIMES, GeneratedFile, output_name
+def save_generated_files(conn, run, call_id, files, arguments, *, named=False, aligned=False):
+    from agentforge_core.python_execution import (
+        FILE_MIMES,
+        WORKSPACE_FILE_MIMES,
+        GeneratedFile,
+        output_name,
+    )
 
     if (
         not 1 <= len(files) <= 4
@@ -345,14 +351,22 @@ def save_generated_files(conn, run, call_id, files, arguments):
     ):
         raise ValueError("Invalid generated file batch")
     scope = Scope(run["tenant_id"], run["space_id"], run["user_id"])
-    from agentforge_storage.file_continuity import prepare_revisions, save_revision
+    from agentforge_storage.file_continuity import (
+        prepare_named_publication,
+        prepare_revisions,
+        save_revision,
+    )
 
-    revisions = prepare_revisions(conn, run, files, arguments)
+    if aligned:
+        files = prepare_named_publication(conn, run, files, arguments)
+    revisions = prepare_revisions(conn, run, files, arguments, named=named, aligned=aligned)
+    mimes = WORKSPACE_FILE_MIMES if aligned else FILE_MIMES
     for file in files:
         if (
             not isinstance(file, GeneratedFile)
             or not 0 < len(file.data) <= MAX_FILE
-            or file.mime_type != FILE_MIMES["." + output_name(file.name).rsplit(".", 1)[-1].lower()]
+            or file.mime_type
+            != mimes["." + output_name(file.name, workspace=aligned).rsplit(".", 1)[-1].lower()]
         ):
             raise ValueError("Invalid generated file")
         key = "p:" + hashlib.sha256((call_id + ":" + file.name).encode()).hexdigest()
@@ -361,9 +375,9 @@ def save_generated_files(conn, run, call_id, files, arguments):
             scope,
             run["agent_id"],
             run["run_id"],
-            file.name,
+            file.display_name or file.name,
             file.mime_type,
-            None,
+            file.description,
             file.data,
             key,
             run["updated_at"],

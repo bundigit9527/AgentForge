@@ -6,7 +6,7 @@ from pathlib import Path
 import httpx
 from agentforge_core.execution import ExecutionSnapshot
 from agentforge_core.models import RunErrorCode
-from agentforge_core.workspace import WORKSPACE_TOOLS
+from agentforge_core.workspace import WORKSPACE_FILE_TOOLS, WORKSPACE_WRITES, workspace_tools
 from agentforge_runtime.errors import RuntimeFailure
 
 from agentforge_connectors.browser import service_configuration
@@ -28,19 +28,22 @@ def workspace_policy():
 
 
 def prepare_workspace(scope, config):
-    enabled = (
-        config.python_continuity
-        and workspace_policy().permits(scope)
-        and len(set(config.tool_references) - set(WORKSPACE_TOOLS)) + len(WORKSPACE_TOOLS) <= 16
+    remaining = 16 - len(
+        set(config.tool_references)
+        - set(workspace_tools(config.workspace_file_tools, config.workspace_file_alignment))
     )
-    approvals = tuple(t for t in config.approval_tools if t != "workspace_save@1")
+    enabled = config.python_continuity and workspace_policy().permits(scope) and remaining >= 3
+    editing = enabled and remaining >= len(WORKSPACE_FILE_TOOLS)
+    approvals = tuple(t for t in config.approval_tools if t not in WORKSPACE_WRITES)
     if enabled:
         service_configuration()
-        approvals += ("workspace_save@1",)
+        approvals += ("workspace_save@1", "write_file@2") if editing else ("workspace_save@1",)
     return ExecutionSnapshot.model_validate(
         {
             **config.model_dump(),
             "workspace_enabled": enabled,
+            "workspace_file_tools": editing,
+            "workspace_file_alignment": editing,
             "workspace_mode": None,
             "approval_tools": approvals,
         }
@@ -65,6 +68,15 @@ def workspace_request(claim, tool, arguments):
                 },
             ) as response:
                 if response.status_code != 200:
+                    response.read()
+                    if response.status_code == 409:
+                        code = response.json().get("error")
+                        if code in {
+                            "workspace_file_changed",
+                            "workspace_file_unsupported",
+                            "workspace_file_missing",
+                        }:
+                            raise RuntimeFailure(RunErrorCode(code))
                     raise RuntimeFailure(
                         RunErrorCode.TOOL_NOT_ALLOWED
                         if response.status_code == 403

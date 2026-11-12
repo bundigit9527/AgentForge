@@ -2,11 +2,16 @@
 
 import sqlalchemy as sa
 from agentforge_core.effects import EffectRequest
+from agentforge_core.workspace import WORKSPACE_WRITES
 
 from agentforge_storage.schema import external_effects, tool_calls
 
 
 def dispatched_tool(store, claim, tool, arguments):
+    config = claim.run.execution_config
+    ref = next((r for r in config.tool_references if r.split("@")[0] == tool), None)
+    if ref is None:
+        return False
     with store.engine.connect() as conn:
         calls = (
             conn.execute(
@@ -14,7 +19,7 @@ def dispatched_tool(store, claim, tool, arguments):
                     tool_calls.c.run_id == claim.run.run_id,
                     tool_calls.c.attempt_id == claim.attempt_id,
                     tool_calls.c.name == tool,
-                    tool_calls.c.version == 1,
+                    tool_calls.c.version == int(ref.split("@")[1]),
                     tool_calls.c.status == "running",
                 )
             )
@@ -23,10 +28,10 @@ def dispatched_tool(store, claim, tool, arguments):
         )
         if arguments not in calls:
             return False
-        if tool != "workspace_save":
+        if ref not in WORKSPACE_WRITES:
             return True
         digest = EffectRequest(
-            tool_reference="workspace_save@1", target="registered-tool", arguments=arguments
+            tool_reference=ref, target="registered-tool", arguments=arguments
         ).digest()
         return (
             conn.execute(

@@ -226,11 +226,27 @@ class ChatHarness(Harness):
                                 RunErrorCode.WEB_LIMIT_EXCEEDED,
                             }
                         )
-                        if not web_error and not (
+                        file_error = (
                             execution_config is not None
-                            and execution_config.browser_reading
-                            and invocation.definition.reference in browser_tools(True)
-                            and error.code == RunErrorCode.BROWSER_PAGE_CHANGED
+                            and execution_config.workspace_file_tools
+                            and invocation.definition.reference
+                            in {"read_file@1", "write_file@1", "write_file@2"}
+                            and error.code
+                            in {
+                                RunErrorCode.WORKSPACE_FILE_CHANGED,
+                                RunErrorCode.WORKSPACE_FILE_MISSING,
+                                RunErrorCode.WORKSPACE_FILE_UNSUPPORTED,
+                            }
+                        )
+                        if (
+                            not web_error
+                            and not file_error
+                            and not (
+                                execution_config is not None
+                                and execution_config.browser_reading
+                                and invocation.definition.reference in browser_tools(True)
+                                and error.code == RunErrorCode.BROWSER_PAGE_CHANGED
+                            )
                         ):
                             raise
                         if not checkpoint():
@@ -239,18 +255,32 @@ class ChatHarness(Harness):
                             {
                                 "error": error.code.value,
                                 "message": (
-                                    "The web request did not succeed. Try "
-                                    "another relevant source or "
-                                    "report this specific limitation. Do "
-                                    "not invent results, bypass access controls, "
-                                    "or claim successful browsing. Public "
-                                    "web access is still available."
+                                    "The file operation did not succeed; no file bytes "
+                                    "were written. "
+                                    "For missing/changed text, list_files or read_file "
+                                    "again before "
+                                    "preparing a new write with the current sha256 and "
+                                    "new approval. "
+                                    "Never bypass a conflict by using null to overwrite. "
+                                    "For binary/large files use attach_file and python_execute."
                                 )
-                                if web_error
-                                else "The page snapshot is no longer current. "
-                                "This action did not succeed. Call browser_observe, then "
-                                "choose the next action using its current link IDs. If observe "
-                                "cannot recover the page, open the intended authorized URL again.",
+                                if file_error
+                                else (
+                                    (
+                                        "The web request did not succeed. Try "
+                                        "another relevant source or "
+                                        "report this specific limitation. Do "
+                                        "not invent results, bypass access controls, "
+                                        "or claim successful browsing. Public "
+                                        "web access is still available."
+                                    )
+                                    if web_error
+                                    else "The page snapshot is no longer current. "
+                                    "This action did not succeed. Call browser_observe, then "
+                                    "choose the next action using its current link IDs. If observe "
+                                    "cannot recover the page, open the intended "
+                                    "authorized URL again."
+                                ),
                             }
                         )
                     window.current.append(

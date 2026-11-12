@@ -24,9 +24,114 @@ def path_parts(action, path):
     return parts
 
 
+class WorkspaceFileError(ValueError):
+    """A definite, pre-write refusal that can safely be returned to the Harness."""
+
+    def __init__(self, code):
+        self.code = code
+        super().__init__(code)
+
+
+def text_operation(action, request, parent, name):
+    # API serializes Agent/manual operations; flock also serializes cooperating writers.
+    import fcntl
+
+    fd = None
+    try:
+        try:
+            fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        except FileNotFoundError:
+            if action == "readText" or request["expected_sha256"] is not None:
+                raise WorkspaceFileError("workspace_file_missing") from None
+        if fd is not None:
+            meta = os.fstat(fd)
+            if not stat.S_ISREG(meta.st_mode) or meta.st_size > MAX_TEXT:
+                raise WorkspaceFileError("workspace_file_unsupported")
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with open(fd, "rb", closefd=False) as stream:
+                raw = stream.read(MAX_TEXT + 1)
+            if len(raw) > MAX_TEXT:
+                raise WorkspaceFileError("workspace_file_unsupported")
+            digest = hashlib.sha256(raw).hexdigest()
+            expected = request.get("expected_sha256")
+            if (action == "writeText" or expected is not None) and expected != digest:
+                raise WorkspaceFileError("workspace_file_changed")
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                raise WorkspaceFileError("workspace_file_unsupported") from None
+            if "\0" in text:
+                raise WorkspaceFileError("workspace_file_unsupported")
+        if action == "readText":
+            offset, limit = request.get("offset", 0), request.get("limit", 2000)
+            if (
+                type(offset) is not int
+                or type(limit) is not int
+                or not 0 <= offset <= len(text)
+                or not 1 <= limit <= 2000
+            ):
+                raise WorkspaceFileError("workspace_file_unsupported")
+            end = min(len(text), offset + limit)
+            return dict(
+                path=request["path"],
+                content=text[offset:end],
+                size=len(raw),
+                sha256=digest,
+                offset=offset,
+                next_offset=end if end < len(text) else None,
+                truncated=end < len(text),
+            )
+        content = request["content"]
+        if not isinstance(content, str) or len(content) > 12000 or "\0" in content:
+            raise WorkspaceFileError("workspace_file_unsupported")
+        data = content.encode("utf-8")
+        tmp = ".af-text-" + secrets.token_hex(16)
+        out_fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600, dir_fd=parent)
+        try:
+            with os.fdopen(out_fd, "wb") as out:
+                out.write(data)
+                out.flush()
+                os.fsync(out.fileno())
+            if fd is None:
+                try:
+                    os.link(tmp, name, src_dir_fd=parent, dst_dir_fd=parent, follow_symlinks=False)
+                except FileExistsError:
+                    raise WorkspaceFileError("workspace_file_changed") from None
+            else:
+                # Reject a path replaced or modified while preparing the new bytes.
+                current = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                if (
+                    current.st_dev,
+                    current.st_ino,
+                    current.st_size,
+                    current.st_mtime_ns,
+                    current.st_ctime_ns,
+                ) != (meta.st_dev, meta.st_ino, meta.st_size, meta.st_mtime_ns, meta.st_ctime_ns):
+                    raise WorkspaceFileError("workspace_file_changed")
+                os.replace(tmp, name, src_dir_fd=parent, dst_dir_fd=parent)
+            os.fsync(parent)
+        finally:
+            try:
+                os.unlink(tmp, dir_fd=parent)
+            except FileNotFoundError:
+                pass
+        return dict(path=request["path"], size=len(data), sha256=hashlib.sha256(data).hexdigest())
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
 def operate(action, request, root="/workspace"):
     path = request["path"]
     parts = path_parts(action, path)
+    create_parents = action == "writeTextV2" and request.get("expected_sha256") is None
+    if action == "writeTextV2":
+        # Validate before creating anything, including the Team Bot directory.
+        content = request["content"]
+        if not isinstance(content, str) or len(content) > 12000 or "\0" in content:
+            raise WorkspaceFileError("workspace_file_unsupported")
+        content.encode("utf-8")
+        action = "writeText"
     if action == "saveArtifact":
         expected = ["artifacts", str(UUID(request["artifactId"])), request["name"]]
         if parts != expected or len(parts) != 3:
@@ -43,12 +148,17 @@ def operate(action, request, root="/workspace"):
             parent = os.open(name, DIR, dir_fd=parent)
             resources.callback(os.close, parent)
         for part in parts if action == "files" else parts[:-1]:
-            if action == "saveArtifact":
+            if action == "saveArtifact" or create_parents:
                 try:
                     os.mkdir(part, 0o700, dir_fd=parent)
                 except FileExistsError:
                     pass
-            parent = os.open(part, DIR, dir_fd=parent)
+            try:
+                parent = os.open(part, DIR, dir_fd=parent)
+            except FileNotFoundError:
+                if action in {"readText", "writeText"}:
+                    raise WorkspaceFileError("workspace_file_missing") from None
+                raise
             resources.callback(os.close, parent)
         if action == "files":
             results = []
@@ -73,6 +183,8 @@ def operate(action, request, root="/workspace"):
                         )
             return sorted(results, key=lambda item: item["path"])
         name = parts[-1]
+        if action in {"readText", "writeText"}:
+            return text_operation(action, request, parent, name)
         if action == "saveArtifact":
             data = base64.b64decode(request["contentBase64"], validate=True)
             digest = hashlib.sha256(data).hexdigest()
@@ -143,6 +255,8 @@ if __name__ == "__main__":
     try:
         action, request = json.load(sys.stdin)
         reply = {"result": operate(action, request)}
+    except WorkspaceFileError as error:
+        reply = {"error": error.code}
     except FileNotFoundError:
         reply = {"error": "file_missing"}
     except (ValueError, OSError):

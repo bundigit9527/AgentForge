@@ -26,12 +26,22 @@ FILE_MIMES = {
     ".json": "application/json",
     ".zip": "application/zip",
 }
+WORKSPACE_FILE_MIMES = {
+    **FILE_MIMES,
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".html": "text/html",
+    ".htm": "text/html",
+    ".markdown": "text/markdown",
+}
 ImageId = Annotated[str, Field(pattern=r"^sha256:[a-f0-9]{64}$")]
 
 
-def output_name(value):
+def output_name(value, *, workspace=False):
     filename(value)
-    if len(value) > 128 or not any(value.lower().endswith(suffix) for suffix in FILE_MIMES):
+    mimes = WORKSPACE_FILE_MIMES if workspace else FILE_MIMES
+    if len(value) > 128 or not any(value.lower().endswith(suffix) for suffix in mimes):
         raise ValueError("Unsupported output file name")
     return value
 
@@ -131,10 +141,12 @@ class GeneratedFile:
     data: bytes
     artifact_id: str | None = None
     parent_id: str | None = None
+    display_name: str | None = None
+    description: str | None = None
 
     @classmethod
-    def decode(cls, encoded):
-        name = output_name(encoded.name)
+    def decode(cls, encoded, *, workspace=False):
+        name = output_name(encoded.name, workspace=workspace)
         data = base64.b64decode(encoded.data, validate=True)
         if not 0 < len(data) <= MAX_FILE:
             raise ValueError("Invalid generated file size")
@@ -155,4 +167,5 @@ class GeneratedFile:
                     or "[Content_Types].xml" not in archive.namelist()
                 ):
                     raise ValueError("Invalid Office document")
-        return cls(name, FILE_MIMES[suffix], data)
+        mimes = WORKSPACE_FILE_MIMES if workspace else FILE_MIMES
+        return cls(name, mimes[suffix], data)

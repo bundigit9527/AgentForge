@@ -1,16 +1,16 @@
 # AgentForge 开发路线图
 
-状态：以原版 Rakazo `d165de43` 为兼容基线，Python Harness 为执行引擎。更新日期：2026-11-08。当前能力以本节及 [对齐矩阵](rakazo-alignment.md) 为准，下方阶段记录保留各自当时的验收范围。
+状态：以原版 Rakazo `d165de43` 为兼容基线，Python Harness 为执行引擎。更新日期：2026-11-12。当前能力以本节及 [对齐矩阵](rakazo-alignment.md) 为准，下方阶段记录保留各自当时的验收范围。
 
 本路线图基于 [项目架构](architecture.md)，以可验证的业务流程推进，不预设未经验证的工期或并发容量。
 
-## 当前增量：电脑文件互通（2026-11-08）
+## 当前增量：工作区读写与附件版本（2026-11-12）
 
-已完成附件保存审批、原版语义的list_files/attach_file、Team/Private电脑文件互通及重启恢复。下一步严格按Rakazo文件工具推进read_file/write_file、命名附件版本，再补open_path与渲染验收。当前差异及验收见 [对标清单](workspace-bridge.md)。
+已完成附件保存审批、list_files/attach_file、Team/Private电脑文件互通及重启恢复。read_file/write_file支持摘要检查与审批覆盖；本轮增加write_file@2自动目录、attach_file@3历史同名版本及HTML/GIF/WebP等格式，旧快照行为保留，迁移0019维护名称索引。下一步按顺序完成：新链路真实模型／电脑回归；open_path与已安装应用打开；隔离渲染和视觉核验。然后推进Skill资源包、模型侧技能维护；Shell与Team shared/单独设计权限和恢复边界。当前差异及验收见 [对标清单](workspace-bridge.md)。
 
 ## 当前增量：文件连续编辑（2026-11-08）
 
-已实现生成文件后按确定版本继续修改、上传文件作为输入、原文件保留、原版附件版本选择；采用同一 Python Harness，Rakazo 保持原版。下一步优先将文件与 Team/Private Computer 工作区衔接，再补桌面打开文件、渲染质量验收、Skill资源包和模型侧技能维护。通用浏览器表单、长期任务与记忆仍按下文计划推进。
+已实现生成文件后按确定版本继续修改、上传文件作为输入、原文件保留、原版附件版本选择；采用同一 Python Harness，Rakazo 保持原版。文件与 Team/Private Computer 工作区衔接已完成；下一步补桌面打开文件、渲染质量验收、Skill资源包和模型侧技能维护。通用浏览器表单、长期任务与记忆仍按下文计划推进。
 
 ## 当前增量：Skill 使用 P0（2026-11-08）
 

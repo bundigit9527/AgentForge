@@ -1,5 +1,6 @@
 """File limits and attachment metadata shared by the Bot chat contract and worker."""
 
+import hashlib
 from typing import Literal
 
 TEXT_TYPES = frozenset({"text/plain", "text/markdown", "text/csv", "text/html", "application/json"})
@@ -16,6 +17,11 @@ FILE_TYPES = TEXT_TYPES | {
 }
 MAX_FILE = 10 * 1024 * 1024
 ResultMime = Literal["text/plain", "text/markdown", "text/csv", "application/json"]
+
+
+def artifact_name_key(name):
+    """Portable Unicode lowercase identity, independent of database collation."""
+    return hashlib.sha256(name.lower().encode("utf-8")).hexdigest()
 
 
 def filename(value):

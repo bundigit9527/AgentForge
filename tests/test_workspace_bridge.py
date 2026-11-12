@@ -6,13 +6,14 @@ from uuid import uuid4
 import httpx
 import pytest
 from agentforge_api.desktop import Desktop
-from agentforge_core.models import RunStatus
+from agentforge_core.models import RunErrorCode, RunStatus
 from agentforge_core.workspace import ARGUMENTS
 from agentforge_runtime.chat_harness import configured_harness
+from agentforge_runtime.errors import RuntimeFailure
 from agentforge_runtime.tools import BUILTIN_TOOLS, ToolExecutor
 from agentforge_runtime.workspace_tools import with_workspace_tools
 from agentforge_storage.artifacts import ArtifactRepository
-from agentforge_supervisor.workspace_files import operate
+from agentforge_supervisor.workspace_files import WorkspaceFileError, operate
 from agentforge_worker.worker import Worker
 
 from tests.model_support import completion, model_settings, tool_call
@@ -68,7 +69,10 @@ def workspace_env(browser_env, people, tmp_path, monkeypatch):
         if key not in folders:
             folders[key] = tmp_path / ("desktop-" + str(len(folders)))
             folders[key].mkdir()
-        return {"result": operate(body["action"], body["request"], folders[key])}
+        try:
+            return {"result": operate(body["action"], body["request"], folders[key])}
+        except WorkspaceFileError as error:
+            return {"error": error.code}
 
     monkeypatch.setattr(Desktop, "exchange", exchange)
 
@@ -80,6 +84,12 @@ def workspace_env(browser_env, people, tmp_path, monkeypatch):
                 runId=claim.run.run_id, attemptId=claim.attempt_id, tool=tool, arguments=args
             ),
         )
+        if response.status_code == 409 and response.json().get("error") in {
+            "workspace_file_changed",
+            "workspace_file_unsupported",
+            "workspace_file_missing",
+        }:
+            raise RuntimeFailure(RunErrorCode(response.json()["error"]))
         assert response.is_success, response.text
         return response.json()
 
@@ -189,14 +199,21 @@ def claim_tool(env, repository, tool="list_files", args=None):
     claim = repository.claim_next()
     args = args if args is not None else {"path": ""}
     registry = with_workspace_tools(
-        BUILTIN_TOOLS, lambda *_: {}, claim.run.execution_config.workspace_mode
+        BUILTIN_TOOLS,
+        lambda *_: {},
+        claim.run.execution_config.workspace_mode,
+        editing=claim.run.execution_config.workspace_file_tools,
+        aligned=claim.run.execution_config.workspace_file_alignment,
+    )
+    reference = next(
+        r for r in claim.run.execution_config.tool_references if r.split("@")[0] == tool
     )
     executor = ToolExecutor(
-        (tool + "@1",),
+        (reference,),
         registry=registry,
-        allowed=(tool + "@1",),
-        read_allowed=(tool + "@1",),
-        write_allowed=("workspace_save@1",),
+        allowed=(reference,),
+        read_allowed=(reference,),
+        write_allowed=("workspace_save@1", "write_file@1", "write_file@2"),
     )
     prepared = executor.prepare("first", tool, json.dumps(args))
     repository.start_tool(claim, prepared.invocation)
@@ -235,10 +252,13 @@ def test_service_token_current_tool_and_approval_are_required(workspace_env, rep
     assert calls == []
 
 
+@pytest.mark.parametrize("tool", ["list_files", "read_file"])
 @pytest.mark.parametrize("stop", ["policy", "lease", "cancel", "membership"])
-def test_live_authorization_before_desktop(workspace_env, repository, clock, people, stop):
+def test_live_authorization_before_desktop(workspace_env, repository, clock, people, stop, tool):
     client, _, _, who, policy, _, calls, _ = workspace_env
-    claim, args = claim_tool(workspace_env, repository)
+    claim, args = claim_tool(
+        workspace_env, repository, tool, {"path": "" if tool == "list_files" else "x.txt"}
+    )
     if stop == "policy":
         policy.write_text('{"grants":[]}')
     elif stop == "lease":
@@ -249,7 +269,7 @@ def test_live_authorization_before_desktop(workspace_env, repository, clock, peo
         people[0].set_member(
             people[1]["admin"], "alice", display_name="Alice", role="member", active=False
         )
-    assert execute(client, claim, "list_files", args).status_code == 403
+    assert execute(client, claim, tool, args).status_code == 403
     assert calls == []
 
 
