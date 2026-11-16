@@ -204,6 +204,7 @@ def claim_tool(env, repository, tool="list_files", args=None):
         claim.run.execution_config.workspace_mode,
         editing=claim.run.execution_config.workspace_file_tools,
         aligned=claim.run.execution_config.workspace_file_alignment,
+        opening=claim.run.execution_config.workspace_open,
     )
     reference = next(
         r for r in claim.run.execution_config.tool_references if r.split("@")[0] == tool
@@ -213,7 +214,7 @@ def claim_tool(env, repository, tool="list_files", args=None):
         registry=registry,
         allowed=(reference,),
         read_allowed=(reference,),
-        write_allowed=("workspace_save@1", "write_file@1", "write_file@2"),
+        write_allowed=("workspace_save@1", "write_file@1", "write_file@2", "open_path@1"),
     )
     prepared = executor.prepare("first", tool, json.dumps(args))
     repository.start_tool(claim, prepared.invocation)

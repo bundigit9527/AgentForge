@@ -79,6 +79,7 @@ class ExecutionSnapshot(BaseModel):
     workspace_enabled: bool = Field(default=False, strict=True)
     workspace_file_tools: bool = Field(default=False, strict=True)
     workspace_file_alignment: bool = Field(default=False, strict=True)
+    workspace_open: bool = Field(default=False, strict=True)
     workspace_mode: Literal["team", "dedicated"] | None = None
     model_backups: tuple[ModelConfig, ...] = Field(default=(), max_length=10)
 
@@ -95,7 +96,9 @@ class ExecutionSnapshot(BaseModel):
         return (
             *self.tools,
             *(
-                workspace_tools(self.workspace_file_tools, self.workspace_file_alignment)
+                workspace_tools(
+                    self.workspace_file_tools, self.workspace_file_alignment, self.workspace_open
+                )
                 if self.workspace_enabled
                 else ()
             ),
@@ -114,6 +117,10 @@ class ExecutionSnapshot(BaseModel):
             raise ValueError("Workspace tools require file continuity and save approval")
         if self.workspace_file_alignment and not self.workspace_file_tools:
             raise ValueError("Aligned file tools require workspace editing")
+        if self.workspace_open and (
+            not self.workspace_file_alignment or "open_path@1" not in self.approval_tools
+        ):
+            raise ValueError("Workspace opening requires aligned tools and approval")
         write_ref = "write_file@2" if self.workspace_file_alignment else "write_file@1"
         if self.workspace_file_tools and (
             not self.workspace_enabled or write_ref not in self.approval_tools

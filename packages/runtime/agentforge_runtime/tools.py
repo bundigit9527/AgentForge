@@ -137,7 +137,8 @@ class ToolRegistry:
                     definition.effect == "pure"
                     or (
                         definition.effect == "write"
-                        and ref in {"workspace_save@1", "write_file@1", "write_file@2"}
+                        and ref
+                        in {"workspace_save@1", "write_file@1", "write_file@2", "open_path@1"}
                         and ref in write_allowed
                     )
                     or (definition.effect == "read" and ref in read_allowed)

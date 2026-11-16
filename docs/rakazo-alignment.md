@@ -1,12 +1,18 @@
 # 与 Rakazo 对齐的架构基线
 
-更新日期为2026-11-12。原版Web兼容基线为Rakazo `d165de43`，本轮文件实现核查本地源码`9218c401`；AgentForge目标迁移为`0019`。各段历史验收保留当时范围，不代表后续增量已经过真实环境验收。
+更新日期为2026-11-16。原版Web兼容基线为Rakazo `d165de43`，本轮文件实现核查本地源码`9218c401`；AgentForge目标迁移为`0019`。各段历史验收保留当时范围，不代表后续增量已经过真实环境验收。
 
 P0 收口、真实 Web / 模型 / 桌面验收和配置说明见 [P0 记录](p0-acceptance.md)。本轮联网工具回归通过 SQLite 704 项（12 项跳过）和 PostgreSQL 716 项（包含原版客户端互操作）；真实 DeepSeek 搜索与读取验收见 [联网工具](web-tools.md)。这些结果不代表 Ubuntu 生产验收。
 
 本次 Skill 增量通过独立 PostgreSQL 全套 730 项（包含原版客户端互操作）。SQLite 全套 717 项通过、12 项跳过，随后补充的审批恢复用例亦通过。普通与显式选择两种真实个人 DeepSeek 技能读取验收通过；详见 [Skill 说明](skills.md)。
 
 上下文差异：本地 Rakazo 默认 `retrieval` 策略，提供历史回查、按模型窗口保留内容及有界缩减旧工具结果，另有后台摘要路径；AgentForge 目前保留完整轮次裁剪。中文联网任务的字节预算与裁剪审计校验不一致已修复，详见 [上下文管理](context-management.md)。
+
+## 2026-11-16 文件预览增量
+
+核对本地 Rakazo `packages/adapters/src/executor.ts` 的 open_path 分支：它通过 sandbox.act 打开路径或 URL、请求观察结果、记录 Computer 操作，并检查人工接管。AgentForge 本轮新增审批后的 open_path@1，沿用 Python Harness、API 授权及桌面互斥；只打开当前 Bot 文件的离线预览，不开放 URL、任意应用或 Shell。文本/HTML以转义文本展示，PDF和Office有界渲染到 Chromium。模型仅收到预览状态，尚未得到截图或视觉理解能力，因此仍不等价于 Rakazo 的完整 Computer 操作。
+
+下一步顺序：①真实模型/API/Worker/Docker两轮文件联调已通过，补原版Web手工审批/预览验收；②视觉观察和受控应用操作；③动态网页输入与登录及写操作恢复；④历史回查与语义压缩；⑤Skill资源包/模型侧维护及MCP管理；⑥独立Task、Routine与Ubuntu部署恢复验收。当前具体开关、测试证据及边界见 [文件互通说明](workspace-bridge.md)。
 
 ## 本轮代码核查：对齐情况与实际差距
 

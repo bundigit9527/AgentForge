@@ -233,7 +233,7 @@ def operate(action, request, root="/workspace"):
                 except FileNotFoundError:
                     pass
             return {"ok": True}
-        if action not in ("downloadFile", "readFile"):
+        if action not in ("downloadFile", "readFile", "openDocument"):
             raise ValueError("Invalid operation")
         limit = MAX_TEXT if action == "readFile" else MAX_FILE
         flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
@@ -246,6 +246,8 @@ def operate(action, request, root="/workspace"):
             raw = src.read(limit + 1)
         if len(raw) > limit:
             raise ValueError("File too large")
+        if action == "openDocument":
+            return open_document(raw, "." + name.rsplit(".", 1)[-1].lower(), path)  # noqa: F821 -- injected fixed renderer
         if action == "readFile":
             return {"path": path, "content": raw.decode("utf-8")}
         return {"path": path, "contentBase64": base64.b64encode(raw).decode("ascii")}

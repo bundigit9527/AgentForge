@@ -158,10 +158,13 @@ class Worker:
                         snapshot.workspace_mode,
                         editing=snapshot.workspace_file_tools,
                         aligned=snapshot.workspace_file_alignment,
+                        opening=snapshot.workspace_open,
                         resolve_parent=lambda name: named_parent(self.repository, claim, name),
                     )
                     refs = workspace_tools(
-                        snapshot.workspace_file_tools, snapshot.workspace_file_alignment
+                        snapshot.workspace_file_tools,
+                        snapshot.workspace_file_alignment,
+                        snapshot.workspace_open,
                     )
                     runtime_tools = (*runtime_tools, *refs)
                     runtime_allowed = (*runtime_allowed, *refs)

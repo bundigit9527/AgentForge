@@ -20,10 +20,12 @@ WORKSPACE_ALIGNED_TOOLS = (
     "read_file@1",
     "write_file@2",
 )
-WORKSPACE_WRITES = ("workspace_save@1", "write_file@1", "write_file@2")
+WORKSPACE_WRITES = ("workspace_save@1", "write_file@1", "write_file@2", "open_path@1")
 
 
-def workspace_tools(editing=False, aligned=False):
+def workspace_tools(editing=False, aligned=False, opening=False):
+    if opening:
+        return (*WORKSPACE_ALIGNED_TOOLS, "open_path@1")
     if aligned:
         return WORKSPACE_ALIGNED_TOOLS
     return WORKSPACE_FILE_TOOLS if editing else WORKSPACE_TOOLS
@@ -112,6 +114,10 @@ class WriteFile(ImportFile):
         return value
 
 
+class OpenPath(ImportFile):
+    computer_mode: Literal["team", "dedicated"]
+
+
 class ListFiles(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     path: str = Field(default="", max_length=1024)
@@ -128,6 +134,7 @@ ARGUMENTS = {
     "list_files": ListFiles,
     "read_file": ReadFile,
     "write_file": WriteFile,
+    "open_path": OpenPath,
 }
 
 

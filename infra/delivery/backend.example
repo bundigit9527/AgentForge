@@ -38,3 +38,6 @@ AGENTFORGE_PYTHON_ENDPOINT=http://127.0.0.1:8766
 # Optional Bot workspace file tools; explicit user grants, save requires approval.
 # See docs/workspace-bridge.md; empty keeps old behavior.
 AGENTFORGE_WORKSPACE_POLICY_FILE=
+
+# Offline desktop preview; Office requires the optional preview image.
+AGENTFORGE_WORKSPACE_OPEN_ENABLED=false

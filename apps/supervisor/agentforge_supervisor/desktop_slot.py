@@ -16,6 +16,8 @@ from agentforge_supervisor.desktop import docker, running_desktop
 
 def execute_workspace(action, request, generation):
     program = Path(__file__).with_name("workspace_files.py").read_text()
+    if action == "openDocument":
+        program = Path(__file__).with_name("workspace_preview.py").read_text() + "\n" + program
     result = docker(
         "exec",
         "-i",
@@ -26,6 +28,7 @@ def execute_workspace(action, request, generation):
         "-c",
         program,
         data=json.dumps([action, request]),
+        timeout=150 if action == "openDocument" else 30,
     )
     return json.loads(result)
 

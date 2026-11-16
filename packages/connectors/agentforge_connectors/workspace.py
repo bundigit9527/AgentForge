@@ -30,14 +30,23 @@ def workspace_policy():
 def prepare_workspace(scope, config):
     remaining = 16 - len(
         set(config.tool_references)
-        - set(workspace_tools(config.workspace_file_tools, config.workspace_file_alignment))
+        - set(
+            workspace_tools(
+                config.workspace_file_tools, config.workspace_file_alignment, config.workspace_open
+            )
+        )
     )
     enabled = config.python_continuity and workspace_policy().permits(scope) and remaining >= 3
     editing = enabled and remaining >= len(WORKSPACE_FILE_TOOLS)
+    opening = (
+        editing and remaining >= 6 and os.environ.get("AGENTFORGE_WORKSPACE_OPEN_ENABLED") == "true"
+    )
     approvals = tuple(t for t in config.approval_tools if t not in WORKSPACE_WRITES)
     if enabled:
         service_configuration()
         approvals += ("workspace_save@1", "write_file@2") if editing else ("workspace_save@1",)
+    if opening:
+        approvals += ("open_path@1",)
     return ExecutionSnapshot.model_validate(
         {
             **config.model_dump(),
@@ -45,6 +54,7 @@ def prepare_workspace(scope, config):
             "workspace_file_tools": editing,
             "workspace_file_alignment": editing,
             "workspace_mode": None,
+            "workspace_open": opening,
             "approval_tools": approvals,
         }
     )

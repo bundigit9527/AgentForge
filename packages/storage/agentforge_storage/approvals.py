@@ -109,6 +109,12 @@ class ApprovalRepository:
                             else "写入私人电脑文件（按原文件摘要核对覆盖）"
                         )
                         if request["tool_reference"] in {"write_file@1", "write_file@2"}
+                        else (
+                            "在团队电脑显示文件预览（同空间成员可见）"
+                            if request["arguments"].get("computer_mode") == "team"
+                            else "在私人电脑显示文件预览"
+                        )
+                        if request["tool_reference"] == "open_path@1"
                         else "请确认调用工具：" + request["tool_reference"],
                         "detail": json.dumps(request, ensure_ascii=False, indent=2),
                         "status": "pending",

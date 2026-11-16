@@ -9,6 +9,7 @@ from agentforge_core.workspace import (
     ImportFile,
     ListFiles,
     NamedImportFile,
+    OpenPath,
     ReadFile,
     SaveFile,
     WriteFile,
@@ -49,6 +50,17 @@ class FileList(BaseModel):
     truncated: bool
 
 
+class PreviewResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: str
+    pages: int
+    truncated: bool
+    previewed: bool
+    visual_reviewed: bool
+    computer_mode: str
+    error: str | None = None
+
+
 class ReadText(BaseModel):
     model_config = ConfigDict(extra="forbid")
     path: str
@@ -61,7 +73,7 @@ class ReadText(BaseModel):
 
 
 def with_workspace_tools(
-    registry, request, mode, *, editing=False, aligned=False, resolve_parent=None
+    registry, request, mode, *, editing=False, aligned=False, opening=False, resolve_parent=None
 ):
     def import_file(args):
         payload = request("attach_file", args.model_dump())
@@ -90,7 +102,27 @@ def with_workspace_tools(
         )
 
     return registry.extended(
-        [
+        (
+            [
+                ToolDefinition(
+                    "open_path",
+                    1,
+                    "Show an offline preview of a file from this Bot's computer, with approval. "
+                    "Use a path from list_files or workspace_save. Text/HTML is shown "
+                    "as escaped text; images and up to 10 PDF pages are displayed. Office requires "
+                    "LibreOffice. visual_reviewed=false: no quality review. "
+                    "If previewed=false, report the error. Originals stay unchanged; no URLs. "
+                    f"Use computer_mode={mode}; Team screens are shared.",
+                    OpenPath,
+                    PreviewResult,
+                    lambda args: request("open_path", args.model_dump()),
+                    effect="write",
+                )
+            ]
+            if opening
+            else []
+        )
+        + [
             ToolDefinition(
                 "list_files",
                 1,

@@ -30,7 +30,9 @@ class RequestBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     runId: UUID
     attemptId: UUID
-    tool: Literal["workspace_save", "attach_file", "list_files", "read_file", "write_file"]
+    tool: Literal[
+        "workspace_save", "attach_file", "list_files", "read_file", "write_file", "open_path"
+    ]
     arguments: dict
 
 
@@ -74,12 +76,15 @@ def mount_workspace_execution(app, store, directory):
         config = claim.run.execution_config
         return bool(
             config.workspace_enabled
+            and (
+                tool != "open_path" or os.environ.get("AGENTFORGE_WORKSPACE_OPEN_ENABLED") == "true"
+            )
             and config.workspace_mode
             and workspace_policy().permits(claim.run.scope)
             and PythonPolicy.from_env().permits(claim.run.scope)
             and PythonSettings.from_env().image == config.python_image
             and (
-                tool not in {"workspace_save", "write_file"}
+                tool not in {"workspace_save", "write_file", "open_path"}
                 or arguments["computer_mode"] == config.workspace_mode
             )
             and dispatched_tool(store, claim, tool, arguments)
@@ -172,6 +177,8 @@ def mount_workspace_execution(app, store, directory):
                     contentBase64=base64.b64encode(row["data"]).decode(),
                     sha256=hashlib.sha256(row["data"]).hexdigest(),
                 )
+            elif body.tool == "open_path":
+                action, request = "openDocument", {"path": arguments["path"]}
             elif body.tool in {"read_file", "write_file"}:
                 action = "readText" if body.tool == "read_file" else "writeText"
                 if (
@@ -208,7 +215,7 @@ def mount_workspace_execution(app, store, directory):
                     return error(code)
                 return error("workspace_failed")
             result = reply["result"]
-            if body.tool in {"workspace_save", "write_file"}:
+            if body.tool in {"workspace_save", "write_file", "open_path"}:
                 return {**result, "computer_mode": claim.run.execution_config.workspace_mode}
             if body.tool == "read_file":
                 return result

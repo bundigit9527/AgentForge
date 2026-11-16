@@ -15,6 +15,7 @@ def transfer(generation, body):
         "readText",
         "writeText",
         "writeTextV2",
+        "openDocument",
     }:
         return {"error": "workspace_invalid"}
     with httpx.Client(timeout=5, trust_env=False) as client:

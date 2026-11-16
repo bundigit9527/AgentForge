@@ -105,3 +105,57 @@ uv run --env-file .env --locked --offline alembic upgrade head
 目录可能在最终文件写入前创建。确定失败代表没有发布新文件内容，不保证没有新增空目录；取消或断线仍沿用未知副作用规则，不自动重试。通用Shell、open_path、应用渲染、自动物化当前轮上传附件和Team shared/仍待后续对齐。
 
 本轮最终验证：Ruff检查及格式检查通过；SQLite 869项通过、5项PostgreSQL专用测试跳过；独立PostgreSQL 874项全部通过，均包含原版Rakazo客户端互操作。新增19项对标回归。临时schema残留0，专用测试容器已清理，Colima恢复停止；未修改Rakazo源码、开发数据库或本机模型配置。本轮未做真实模型／Docker桌面新工具验收。
+
+## 2026-11-13 真实桌面文件协议验收
+
+新增 `scripts/verify_workspace_files.py`，在两个一次性真实 Docker 桌面中通过生产固定文件程序执行验证，正常退出或异常时由桌面生命周期清理容器。每次使用新的临时工作区；不连接数据库、不调用模型，不操作现有用户文件。
+
+本次 Colima / linux arm64 验收：Team 9项、Private 8项全部通过，包括旧版本目录拒绝、新版本多级目录创建、中文分页读取、摘要冲突保护、编辑与下载字节一致、目录列举、Team内Bot相同路径隔离、符号链接及路径穿越拒绝。两台容器删除检查通过，Colima恢复停止。
+
+这次验证只覆盖真实桌面文件协议，不替代API审批、真实模型选择工具、工作区持久恢复、图形应用打开或视觉质量验收；前两者的全链路真实联调仍待完成。本轮不新增open_path，不修改Rakazo。
+
+复现（先启动Colima，并确保.env中配置本地不可变桌面镜像ID；输出文件须不存在）：
+
+```bash
+uv run --env-file .env --locked --offline python scripts/verify_workspace_files.py --context colima --output .local/acceptance/workspace-files.json
+```
+
+脚本不自动启动或停止Colima，不拉镜像，不覆盖既有证据。JSON包含镜像ID、逐模式检查项及总结果；临时桌面访问令牌不写入报告。中止或验收失败时进程返回非零状态，不能仅凭部分passed检查判断整体成功。
+
+## 离线桌面预览（2026-11-16）
+
+新增 `open_path@1`，通过同一 Harness、原版审批、API 桌面互斥及 Supervisor 固定程序打开当前 Bot 文件的离线预览。不是任意应用启动或 Shell；不接受 URL、绝对路径或父目录跳转。只有新 Run 在独立开关开启、已有 workspace 授权且剩余至少6个工具名额时加入，旧快照保持不变。
+
+API和Worker设置 `AGENTFORGE_WORKSPACE_OPEN_ENABLED=true`；默认关闭，API运行中撤回开关也拒绝操作。Team审批明确屏幕同空间可见。打开过程中断线、取消可能已产生界面副作用，沿用未知结果不重放机制。
+
+文本／HTML以转义文本显示（最多20000字符）；PNG/JPEG/GIF/WebP显示图片；PDF最多渲染前10页、每页缩放至1200像素；Office通过LibreOffice转PDF再预览，保留原附件和工作区文件。超过显示范围标记truncated，最多保留6个预览窗口，用户可手动关闭后继续。渲染在无网络桌面容器内进行，不把网页脚本或文件作为命令执行。
+
+返回previewed=true表示页面已加载、图片可解码并完成截图调用；visual_reviewed始终false，不能据此声称排版正确或内容经视觉审核。缺少应用时返回previewed=false和workspace_preview_application_missing，提示部署对应镜像，不伪造成功。
+
+可使用`infra/computer/preview.Dockerfile`扩展现有桌面镜像：
+
+```bash
+docker --context colima build --build-arg BASE_IMAGE=你的本地桌面镜像 -f infra/computer/preview.Dockerfile -t agentforge/desktop-preview:local .
+docker --context colima image inspect agentforge/desktop-preview:local --format '{{.Id}}'
+```
+
+将得到的不可变ID配置为AGENTFORGE_COMPUTER_IMAGE，并按原有生命周期升级桌面；不覆盖现有工作区。API、Worker、Supervisor需统一升级，不新增数据库迁移。原版Rakazo源码保持不变。
+
+本轮验证：完整SQLite回归881项通过、5项PostgreSQL专用用例跳过（含原版客户端互通）；随后补充预览后取消回归，单独验证。真实Colima/linux arm64一次性桌面中，文本、PDF、中文PPT的openDocument均返回previewed=true，中文PPT截图已人工核对可读。镜像由preview.Dockerfile成功构建，保留为agentforge/desktop-preview:acceptance。真实桌面验证未经过模型/API审批，不代替生成→审批→预览→修改全链路验收，也不代表任意Office文档排版均正确。本轮没有执行PostgreSQL增量回归或修改开发库、本机.env。
+
+
+## 2026-11-16 真实模型完整文件流程验收
+
+新增 `tests/interop/workspace_model_smoke.py`：通过真实HTTP RPC、API、Worker、DeepSeek、独立Python计算容器和实际Team桌面执行两轮。使用一次性SQLite、随机测试账号、独立授权和端口；仅为本次临时账号自动回答保存/预览审批，不新增生产自动批准规则。模型自行选工具、编写和修正Python脚本；验收输入明确指定业务目标，不向Harness加入固定步骤。
+
+结果：首轮skill_read、python_execute、workspace_save、open_path完成；第二轮读取已有附件输入，修改PPT标题并再次保存、预览。每轮2次审批，open_path均返回previewed=true。附件只有一个文件族、两个版本，PPT内部XML分别含第一版/第二版标题，原版字节保持一致。每轮模型实际调用Python两次后完成，并非承诺首次脚本必定成功。证据仅记录工具状态与预览结果，不保存密钥；本轮证据目录 `/tmp/af-workspace-model-20261116-b`。
+
+首次尝试因验收脚本的临时桌面目录未设置0700而失败；修正后重新使用全新临时环境通过。该失败不计为通过记录。本轮未修改生产执行逻辑、开发数据库、.env或Rakazo。测试不启动原版Web，不代表浏览器点击验收；截图没有输入模型，仍无模型视觉审核能力；不是PostgreSQL或Ubuntu生产验证。
+
+复现（先启动Colima，配置真实模型密钥和AGENTFORGE_PYTHON_IMAGE，确保预览镜像已构建；输出目录必须不存在）：
+
+```bash
+uv run --env-file .env --locked --offline python tests/interop/workspace_model_smoke.py --output .local/acceptance/workspace-model --image agentforge/desktop-preview:acceptance
+```
+
+这会产生真实模型费用。脚本停止测试服务并清理临时数据库/桌面，保留输出目录内的日志与result.json；最终passed=true才表示全部断言通过。模型非确定性可能导致后续运行失败，须查看证据，不能将单次通过解释为任意任务均能成功。下一步对齐Rakazo的视觉观察与受控应用操作，并补原版Web手工审批与预览验收。
