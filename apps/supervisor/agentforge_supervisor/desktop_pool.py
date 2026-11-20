@@ -226,7 +226,8 @@ class DesktopPool:
             self.finish_checkpoint(path)
             result = transfer(generation, body)
             if (
-                body["action"] in {"saveArtifact", "writeText", "writeTextV2"}
+                body["action"]
+                in {"saveArtifact", "writeText", "writeTextV2", "actComputer", "launchApp"}
                 and "result" in result
             ):
                 self.save(path, generation)

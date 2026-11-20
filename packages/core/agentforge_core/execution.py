@@ -19,6 +19,7 @@ class ModelConfig(BaseModel):
     provider: Literal["mock", "chat_completions"] = "mock"
     model: str = Field(default="", max_length=128)
     api_style: Literal["openai", "deepseek", "compatible"] = "openai"
+    supports_images: bool = Field(default=False, strict=True)
     stream: bool = Field(default=False, strict=True)
     route_fingerprint: str = ""
     connection_id: str | None = Field(default=None, pattern=r"^[a-f0-9-]{36}$")
@@ -31,6 +32,7 @@ class ModelConfig(BaseModel):
     compact_tool_results: bool = Field(default=False, strict=True)
     context_window_tokens: int | None = Field(default=None, ge=1025, le=2147483647, strict=True)
     timeout_seconds: float = Field(default=30, gt=0, le=120, allow_inf_nan=False)
+    max_tool_repairs: int = Field(default=0, ge=0, le=2, strict=True)
     max_rounds: int = Field(default=8, ge=1, le=32, strict=True)
     max_completion_tokens: int = Field(default=2048, ge=1, le=131072, strict=True)
 
@@ -38,6 +40,8 @@ class ModelConfig(BaseModel):
     def validate_route(self):
         if self.context_max_chars > 200000 and not self.compact_tool_results:
             raise ValueError("Legacy character budget must not exceed 200000")
+        if self.supports_images and self.provider != "chat_completions":
+            raise ValueError("Image input requires a real model route")
         personal = (self.connection_id, self.connection_revision, self.catalog_provider)
         if any(x is not None for x in personal) and (
             any(x is None for x in personal) or self.provider != "chat_completions"
@@ -80,6 +84,7 @@ class ExecutionSnapshot(BaseModel):
     workspace_file_tools: bool = Field(default=False, strict=True)
     workspace_file_alignment: bool = Field(default=False, strict=True)
     workspace_open: bool = Field(default=False, strict=True)
+    computer_enabled: bool = Field(default=False, strict=True)
     workspace_mode: Literal["team", "dedicated"] | None = None
     model_backups: tuple[ModelConfig, ...] = Field(default=(), max_length=10)
 
@@ -97,7 +102,10 @@ class ExecutionSnapshot(BaseModel):
             *self.tools,
             *(
                 workspace_tools(
-                    self.workspace_file_tools, self.workspace_file_alignment, self.workspace_open
+                    self.workspace_file_tools,
+                    self.workspace_file_alignment,
+                    self.workspace_open,
+                    self.computer_enabled,
                 )
                 if self.workspace_enabled
                 else ()
@@ -111,6 +119,13 @@ class ExecutionSnapshot(BaseModel):
 
     @model_validator(mode="after")
     def validate_skills(self):
+        if self.computer_enabled and (
+            not self.workspace_enabled
+            or not self.model.supports_images
+            or not {"computer_act@1", "launch_app@1"} <= set(self.approval_tools)
+            or any(not m.supports_images for m in self.model_backups)
+        ):
+            raise ValueError("Computer tools require vision routes, workspace and action approval")
         if self.workspace_enabled and (
             not self.python_continuity or "workspace_save@1" not in self.approval_tools
         ):

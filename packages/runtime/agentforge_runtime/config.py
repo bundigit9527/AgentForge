@@ -21,15 +21,22 @@ class ModelSettings:
     context_max_bytes: int | None = None
     compact_tool_results: bool = False
     context_window_tokens: int | None = None
+    supports_images: bool = False
+    image_models: tuple[str, ...] = ()
     stream: bool = False
     context_policy: str = "trim_history"
     context_max_chars: int = 100000
     timeout_seconds: float = 30
+    max_tool_repairs: int = 0
     max_rounds: int = 8
     max_completion_tokens: int = 2048
     require_credentials: bool = field(default=True, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        if type(self.supports_images) is not bool:
+            raise ValueError("Image capability must be a boolean")
+        if type(self.max_tool_repairs) is not int or not 0 <= self.max_tool_repairs <= 2:
+            raise ValueError("Model tool repairs must be between 0 and 2")
         if self.context_policy not in {"reject", "trim_history"}:
             raise ValueError("AGENTFORGE_MODEL_CONTEXT_POLICY must be reject or trim_history")
         maximum = 2147483647 if self.compact_tool_results else 200000
@@ -105,6 +112,7 @@ class ModelSettings:
         try:
             context_chars = int(os.environ.get("AGENTFORGE_MODEL_CONTEXT_MAX_CHARS", "100000"))
             timeout = float(os.environ.get("AGENTFORGE_MODEL_TIMEOUT_SECONDS", "30"))
+            repairs = int(os.environ.get("AGENTFORGE_MODEL_MAX_TOOL_REPAIRS", "2"))
             rounds = int(os.environ.get("AGENTFORGE_MODEL_MAX_ROUNDS", "8"))
             tokens = int(os.environ.get("AGENTFORGE_MODEL_MAX_COMPLETION_TOKENS", "2048"))
         except ValueError:
@@ -115,7 +123,14 @@ class ModelSettings:
         streaming = os.environ.get("AGENTFORGE_MODEL_STREAM", "false").lower()
         if streaming not in {"true", "false"}:
             raise ValueError("AGENTFORGE_MODEL_STREAM must be true or false")
+        image_models = tuple(
+            v.strip()
+            for v in os.environ.get("AGENTFORGE_MODEL_IMAGE_MODELS", "").split(",")
+            if v.strip()
+        )
         return cls(
+            image_models=image_models,
+            supports_images=os.environ.get("AGENTFORGE_MODEL_NAME", "") in image_models,
             stream=streaming == "true",
             compact_tool_results=True,
             context_policy=os.environ.get("AGENTFORGE_MODEL_CONTEXT_POLICY", "trim_history"),
@@ -132,6 +147,7 @@ class ModelSettings:
             api_style=os.environ.get("AGENTFORGE_MODEL_API_STYLE", "openai"),
             timeout_seconds=timeout,
             max_rounds=rounds,
+            max_tool_repairs=repairs,
             max_completion_tokens=tokens,
             require_credentials=require_credentials,
         )
@@ -149,10 +165,16 @@ class ModelSettings:
             return self
         if provider != self.provider or model not in self.model_ids:
             raise ValueError("Choose a server-configured model")
-        return replace(self, model=model, allowed_models=self.model_ids)
+        return replace(
+            self,
+            model=model,
+            allowed_models=self.model_ids,
+            supports_images=model in self.image_models,
+        )
 
     def snapshot(self) -> ModelConfig:
         return ModelConfig(
+            supports_images=self.supports_images if self.provider != "mock" else False,
             connection_id=self.connection_id,
             connection_revision=self.connection_revision,
             catalog_provider=self.catalog_provider,
@@ -172,6 +194,7 @@ class ModelSettings:
             ),
             timeout_seconds=self.timeout_seconds,
             max_rounds=self.max_rounds,
+            max_tool_repairs=self.max_tool_repairs,
             max_completion_tokens=self.max_completion_tokens,
         )
 
@@ -182,6 +205,7 @@ class ModelSettings:
                 context_max_chars=snapshot.context_max_chars,
                 timeout_seconds=snapshot.timeout_seconds,
                 max_rounds=snapshot.max_rounds,
+                max_tool_repairs=snapshot.max_tool_repairs,
                 max_completion_tokens=snapshot.max_completion_tokens,
             )
         if (self.connection_id, self.connection_revision) != (
@@ -196,6 +220,7 @@ class ModelSettings:
         return replace(
             self,
             model=snapshot.model,
+            supports_images=snapshot.supports_images,
             api_style=snapshot.api_style,
             stream=snapshot.stream,
             context_policy=snapshot.context_policy,
@@ -205,6 +230,7 @@ class ModelSettings:
             context_window_tokens=snapshot.context_window_tokens,
             timeout_seconds=snapshot.timeout_seconds,
             max_rounds=snapshot.max_rounds,
+            max_tool_repairs=snapshot.max_tool_repairs,
             max_completion_tokens=snapshot.max_completion_tokens,
             require_credentials=True,
         )

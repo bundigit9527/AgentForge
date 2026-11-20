@@ -5,6 +5,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from agentforge_core.computer import COMPUTER_TOOLS, ActComputer, LaunchApp, ObserveComputer
+
 WORKSPACE_TOOLS = ("list_files@1", "attach_file@1", "workspace_save@1")
 WORKSPACE_FILE_TOOLS = (
     "list_files@1",
@@ -20,10 +22,19 @@ WORKSPACE_ALIGNED_TOOLS = (
     "read_file@1",
     "write_file@2",
 )
-WORKSPACE_WRITES = ("workspace_save@1", "write_file@1", "write_file@2", "open_path@1")
+WORKSPACE_WRITES = (
+    "workspace_save@1",
+    "write_file@1",
+    "write_file@2",
+    "open_path@1",
+    "computer_act@1",
+    "launch_app@1",
+)
 
 
-def workspace_tools(editing=False, aligned=False, opening=False):
+def workspace_tools(editing=False, aligned=False, opening=False, computer=False):
+    if computer:
+        return (*workspace_tools(editing, aligned, opening), *COMPUTER_TOOLS)
     if opening:
         return (*WORKSPACE_ALIGNED_TOOLS, "open_path@1")
     if aligned:
@@ -135,6 +146,9 @@ ARGUMENTS = {
     "read_file": ReadFile,
     "write_file": WriteFile,
     "open_path": OpenPath,
+    "computer_observe": ObserveComputer,
+    "computer_act": ActComputer,
+    "launch_app": LaunchApp,
 }
 
 

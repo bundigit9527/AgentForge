@@ -41,6 +41,8 @@ class ModelManager:
         window = connection_window(row["provider"], config, model)
         budget = window - config["maxTokens"]
         return ModelSettings(
+            supports_images=model in config.get("imageModels", []),
+            image_models=tuple(config.get("imageModels", [])),
             provider="chat_completions",
             base_url=config["baseUrl"],
             api_key=key,
@@ -55,6 +57,7 @@ class ModelManager:
             compact_tool_results=True,
             timeout_seconds=self.settings.timeout_seconds,
             max_rounds=self.settings.max_rounds,
+            max_tool_repairs=self.settings.max_tool_repairs,
             max_completion_tokens=config["maxTokens"],
             require_credentials=require_key,
             connection_id=row["connection_id"],
@@ -127,6 +130,17 @@ class ModelManager:
                 baseUrl=base,
                 modelId=body.modelId,
                 models=models,
+                imageModels=sorted(
+                    (
+                        (
+                            set(previous.get("imageModels", []))
+                            if previous.get("baseUrl") == base
+                            else set()
+                        )
+                        - {body.modelId}
+                    )
+                    | ({body.modelId} if body.supportsImages else set())
+                ),
                 label=body.label or body.provider,
                 hasKey=bool(key),
                 maxTokens=maximum,
@@ -171,7 +185,8 @@ class ModelManager:
             reasoning=False,
             thinkingLevel=None,
             thinkingLevels=[],
-            supportsImages=False,
+            supportsImages=(choice["model_id"] if is_default else config["modelId"])
+            in config.get("imageModels", []),
             maxTokens=config["maxTokens"],
             contextWindow=connection_window(
                 row["provider"], config, choice["model_id"] if is_default else config["modelId"]

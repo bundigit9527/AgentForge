@@ -32,7 +32,10 @@ def prepare_workspace(scope, config):
         set(config.tool_references)
         - set(
             workspace_tools(
-                config.workspace_file_tools, config.workspace_file_alignment, config.workspace_open
+                config.workspace_file_tools,
+                config.workspace_file_alignment,
+                config.workspace_open,
+                config.computer_enabled,
             )
         )
     )
@@ -41,10 +44,19 @@ def prepare_workspace(scope, config):
     opening = (
         editing and remaining >= 6 and os.environ.get("AGENTFORGE_WORKSPACE_OPEN_ENABLED") == "true"
     )
+    computer = (
+        enabled
+        and config.model.supports_images
+        and all(m.supports_images for m in config.model_backups)
+        and os.environ.get("AGENTFORGE_COMPUTER_TOOLS_ENABLED") == "true"
+        and remaining >= (6 if opening else 5 if editing else 3) + 3
+    )
     approvals = tuple(t for t in config.approval_tools if t not in WORKSPACE_WRITES)
     if enabled:
         service_configuration()
         approvals += ("workspace_save@1", "write_file@2") if editing else ("workspace_save@1",)
+    if computer:
+        approvals += ("computer_act@1", "launch_app@1")
     if opening:
         approvals += ("open_path@1",)
     return ExecutionSnapshot.model_validate(
@@ -55,6 +67,7 @@ def prepare_workspace(scope, config):
             "workspace_file_alignment": editing,
             "workspace_mode": None,
             "workspace_open": opening,
+            "computer_enabled": computer,
             "approval_tools": approvals,
         }
     )
@@ -82,6 +95,8 @@ def workspace_request(claim, tool, arguments):
                     if response.status_code == 409:
                         code = response.json().get("error")
                         if code in {
+                            "computer_screen_changed",
+                            "computer_application_missing",
                             "workspace_file_changed",
                             "workspace_file_unsupported",
                             "workspace_file_missing",

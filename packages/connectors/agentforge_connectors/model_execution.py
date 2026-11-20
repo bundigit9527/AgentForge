@@ -53,6 +53,11 @@ class RoutedModel:
 
         while True:
             route = self.routes[self.index]
+            if (
+                any(isinstance(m.get("content"), list) for m in messages)
+                and not route.supports_images
+            ):
+                raise RuntimeFailure(RunErrorCode.MODEL_CONFIGURATION_MISMATCH)
             settings = self.checked_settings(route)
             if not check():
                 raise ExecutionStopped()

@@ -206,7 +206,6 @@ def test_connection_failures_keep_old_key_and_selection(managed):
     with pytest.raises(RunConflict):
         manager.repo.save(scopes["alice"], row, 0)
     for values in (
-        {"supportsImages": True},
         {"reasoning": True},
         {"thinkingLevel": "high"},
         {"contextWindow": 4000, "maxTokens": 4096},
@@ -394,3 +393,22 @@ def test_backup_page_scope_preflight_cannot_change_identity(managed):
         {"userId": "bob"},
     ]:
         assert rpc(client, headers["alice"], "me", body).status_code == 422
+
+
+def test_image_capability_is_per_model_and_resets_on_endpoint_change(managed):
+    _, _, manager, scopes, _ = managed
+    result = connect(managed, supportsImages=True)
+    assert result["supportsImages"] is True
+    old = manager.select(scopes["alice"], "openai-compatible", "alpha").snapshot()
+    connect(managed, modelId="beta", supportsImages=False)
+    assert manager.select(scopes["alice"], "openai-compatible", "alpha").snapshot().supports_images
+    assert (
+        not manager.select(scopes["alice"], "openai-compatible", "beta").snapshot().supports_images
+    )
+    connect(managed, baseUrl="https://another.example/v1", modelId="alpha", supportsImages=False)
+    assert (
+        not manager.select(scopes["alice"], "openai-compatible", "alpha").snapshot().supports_images
+    )
+    assert old.supports_images  # Old snapshots are immutable, never rewritten.
+    with pytest.raises(ModelManagementError):
+        manager.resolve(scopes["alice"], old)

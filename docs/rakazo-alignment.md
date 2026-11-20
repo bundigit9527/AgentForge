@@ -1,12 +1,25 @@
 # 与 Rakazo 对齐的架构基线
 
-更新日期为2026-11-16。原版Web兼容基线为Rakazo `d165de43`，本轮文件实现核查本地源码`9218c401`；AgentForge目标迁移为`0019`。各段历史验收保留当时范围，不代表后续增量已经过真实环境验收。
+更新日期为2026-11-20。原版Web兼容基线为Rakazo `d165de43`，本轮文件实现核查本地源码`9218c401`；AgentForge目标迁移为`0019`。各段历史验收保留当时范围，不代表后续增量已经过真实环境验收。
 
 P0 收口、真实 Web / 模型 / 桌面验收和配置说明见 [P0 记录](p0-acceptance.md)。本轮联网工具回归通过 SQLite 704 项（12 项跳过）和 PostgreSQL 716 项（包含原版客户端互操作）；真实 DeepSeek 搜索与读取验收见 [联网工具](web-tools.md)。这些结果不代表 Ubuntu 生产验收。
 
 本次 Skill 增量通过独立 PostgreSQL 全套 730 项（包含原版客户端互操作）。SQLite 全套 717 项通过、12 项跳过，随后补充的审批恢复用例亦通过。普通与显式选择两种真实个人 DeepSeek 技能读取验收通过；详见 [Skill 说明](skills.md)。
 
 上下文差异：本地 Rakazo 默认 `retrieval` 策略，提供历史回查、按模型窗口保留内容及有界缩减旧工具结果，另有后台摘要路径；AgentForge 目前保留完整轮次裁剪。中文联网任务的字节预算与裁剪审计校验不一致已修复，详见 [上下文管理](context-management.md)。
+
+## 2026-11-20 全局进展与下一步
+
+主链路已具备原版 Web 登录/模型/聊天、Python Harness 工具循环、审批恢复、Skill 发现/读取、受控远程 MCP、联网搜索、文件生成和版本，以及 Team/Private 桌面。新增视觉模型能力、computer_observe、computer_act、launch_app，截图随同一 Harness 请求传给模型；不修改 Rakazo。仍是部分功能对齐，不是完整替代。
+
+1. P0 收口：完成原版 Web 的 Qwen 视觉任务、审批刷新、取消、双用户隔离和接管组合验收；保留真实截图与结果证据。
+2. P1 浏览器：按原版页面工具补输入、表单和受控登录态；外部业务提交先设计结果核对，避免未知副作用重放。
+3. P1 上下文：历史检索、来源可追溯的语义压缩和长期记忆；保持清空、授权与快照语义。
+4. P1 Skill/MCP：Skill 资源包与模型侧版本维护、原版 MCP 管理页；不将技能内容视作权限。
+5. P2 调度协作：独立 Task/Routine、通用 ask_user、执行中追加消息与子任务取消传播。继续使用 Python 队列。
+6. 交付并行：Ubuntu/外部 PostgreSQL/升级与备份恢复实测；本地 Colima 验收不代替生产验收。
+
+当前视觉边界和复现命令见 [桌面视觉](computer-vision.md)。下文带日期的记录表示各阶段状态。
 
 ## 2026-11-16 文件预览增量
 
@@ -20,7 +33,7 @@ P0 收口、真实 Web / 模型 / 桌面验收和配置说明见 [P0 记录](p0-
 | --- | --- | --- |
 | Web 与身份 | React 客户端通过 Better Auth 和 oRPC 访问服务 | 原版 Web 可按部署开关注册、登录、改密并撤销其他浏览器会话、选模型、多轮聊天、接收 SSE 和回答审批。FastAPI 在后端兼容协议，保留 REST。本地账号、角色和空间授权已实现，SSO 和部分管理接口仍待接入。 |
 | 运行与模型 | Graphile Worker 调度任务，Pi 负责 Agent 循环、上下文和工具 | Python Worker 使用数据库队列和租约，Python Harness 调用 Chat Completions。已联调 DeepSeek，支持版本快照、文本流和完整轮次裁剪。缺少 Pi 式语义压缩与独立业务 Task，RPC 的 taskId 为兼容标识。 |
-| 模型管理 | 个人供应商连接、探测、默认、备用与 OAuth | 已接通 DeepSeek / OpenAI Compatible 的个人加密凭据、探测、默认、Bot 选择、断开和实际备用执行。OAuth、图片、思考与其他原生协议待实现。[说明](model-management.md) |
+| 模型管理 | 个人供应商连接、探测、默认、备用与 OAuth | 已接通 DeepSeek / OpenAI Compatible 的个人加密凭据、探测、默认、Bot 选择、断开和实际备用执行。本轮已支持显式图片能力和 Qwen 图片输入；OAuth、思考与其他原生协议待实现。[说明](model-management.md) |
 | Skill 与 MCP | 内置及用户 Skill、MCP 连接和工具管理 | 内置 Skill、HTTP Hub 安装、个人 Skill CRUD、普通聊天目录发现及显式技能先读取已接通。目录和正文按 Run 固定版本，依赖不授予权限。远程 MCP 工具需由部署方登记并限制作用域，原版广场管理和示教录制仍有缺口。 |
 | 审批与恢复 | ExternalEffect、审批卡片和回答后恢复执行 | Python Harness 保存工具参数与检查点，审批后恢复同一次操作。已确认结果可复用，已发出但结果未知的操作停止自动重发。通用外部业务写入仍待接入。 |
 | Docker 交付 | 生产 Compose 可选 Docker 沙箱覆盖配置，由 Supervisor 操作 Docker Engine | 原版 Web、FastAPI、Worker、Supervisor 分开运行，对接外部 PostgreSQL。API 与 Worker 没有 Docker socket。已验证单机 Colima 部署，目标 Ubuntu 环境待验收。 |
@@ -29,7 +42,7 @@ P0 收口、真实 Web / 模型 / 桌面验收和配置说明见 [P0 记录](p0-
 | Activity 与执行记录 | 原版 runs.list、工具步骤及会话事件回放 | 已接通当前用户的活动列表和最近 20 条记录；成功工具保存次数与耗时，失败／中断明确提示，刷新可恢复。尚未实现独立业务 Task 和 Routine。 |
 | 联网搜索与抓取 | 内置 web_search / web_fetch，默认 DuckDuckGo，无需 Computer | Python Worker 已接入同名工具和统一审计；支持 DuckDuckGo 与 Bing RSS，按用户授权访问公开 HTTPS，来源正文为不可信资料。默认关闭；本机已用 Bing RSS + DeepSeek 验收。无 HTTP 明文、登录、JavaScript、PDF 或实时行情专用数据源。 |
 | 浏览器 | 通用浏览器工具提供导航、观察和页面操作 | 新增 Python browser_open / browser_observe / browser_follow，按 Run 授权驱动所属 Computer 的可见 Chromium。支持公网 HTTPS 或指定来源的匿名 HTML 分段读取、查找、滚动和链接点击；无 JavaScript、表单输入与登录态复用，尚未达到 Rakazo 的完整浏览器能力。固定财经工具保留。 |
-| 产物与记忆 | 文件产物、版本和 MemoryProvider | 已支持Python生成Office等文件、确定版本连续编辑、电脑文本读写和聊天附件互通。新attach_file@3按同用户／Bot历史名称归族，write_file@2自动创建目录；HTML/GIF/WebP等格式已补齐。长期记忆、企业知识检索、桌面打开及视觉核验待实现。[文件对标](workspace-bridge.md) |
+| 产物与记忆 | 文件产物、版本和 MemoryProvider | 已支持Python生成Office等文件、确定版本连续编辑、电脑文本读写和聊天附件互通。新attach_file@3按同用户／Bot历史名称归族，write_file@2自动创建目录；HTML/GIF/WebP等格式已补齐。已支持离线桌面预览及受控视觉工具；长期记忆、企业知识检索与完整文档质量审核待实现。[文件对标](workspace-bridge.md) |
 
 Rakazo 对照入口为 `apps/api/src/router.ts`、`apps/worker/src/index.ts` 和 `packages/adapters/src/` 下的 `pi-runtime.ts`、`approval-effect.ts`、`sandbox-factory.ts`、`browser-tools.ts`。AgentForge 对应入口包括 [oRPC 路由](../apps/api/agentforge_api/orpc.py)、[Python Harness](../packages/runtime/agentforge_runtime/chat_harness.py)、[桌面代理](../apps/api/agentforge_api/desktop.py)、[财经网页工具](../apps/supervisor/agentforge_supervisor/visible_news.py) 和 [文件产物存储](../packages/storage/agentforge_storage/artifacts.py)。
 
@@ -135,3 +148,6 @@ Docker 交付采用外部 PostgreSQL、独立 API / Worker 和持有 Docker sock
 ### 2026-11-10：模型窗口与工具上下文
 
 已核对 Rakazo `9218c401`：runtime-context读取实际模型窗口，context-selection使用保守字节估算并缩短工具结果。AgentForge 新个人模型连接增加已知DeepSeek 1M目录和窗口来源，去掉个人模型固定10万字符阻塞；新Run按请求副本缩短旧/大工具正文，保留完整调用配对、Skill正文、来源与控制字段以及原始审批/工具记录。旧连接和旧Run不静默更改，需要明确升级窗口。仍未对齐 read_history/search_history、缓存感知投影、图像预算和语义摘要。公开搜索首轮规则补充“帮忙检索比较好的智能体”等直接请求，保留本地资料/禁止联网/显式Skill边界；不宣称所有模型都会自主选择正确工具。
+
+
+2026-11-20 增量：显式图片模型、运行隔离截图及受审批电脑操作见 [桌面视觉](computer-vision.md)。原版 Rakazo 未修改。

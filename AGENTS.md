@@ -168,3 +168,6 @@ Python 自动文件生成见 docs/python-execution.md。Run 固定 python_image�
 2026-11-12：新workspace_file_alignment快照默认false；只有新获授权RPC任务启用attach_file@3与write_file@2，旧@1/@2和旧审批规则保持原义。write_file@2新建时可在当前Bot目录内逐层创建父目录，拒绝符号链接，不给模型任意mkdir执行权限；确定文件拒绝不表示未留下空目录。attach_file@3标题去空白、无名使用basename，在同租户／空间／用户／Bot历史内忽略大小写匹配，清空聊天不删除文件版本。归族不授予旧文件字节读取权；Python输入和workspace_save仍受冻结清单／本Run限制。父版本须在complete_tool事务内由服务端解析，不相信模型parent_id。PostgreSQL按名称身份加事务锁，沿用文件族行锁；SQLite先取得写锁。迁移0019仅回填名称摘要索引，保留字节、版本与旧Run；新增HTML/GIF/WebP及别名只对新attach_file开放，Python导出格式不静默改变。原版Web不改动，open_path、渲染、通用Shell和Team shared/仍待开发。
 
 2026-11-16：workspace_open默认false；部署显式开启AGENTFORGE_WORKSPACE_OPEN_ENABLED且工具预算足6项的新任务才加入open_path@1及对应审批。API核对当前开关、同参数dispatched台账、Bot范围、租约、取消和接管。固定渲染器只访问安全读取的文件副本；HTML转义为文本，PDF/Office有页数和时间上限。previewed不等于视觉审核，缺应用返回明确否定结果；未知界面副作用不重放。不开放任意应用或Shell，不修改Rakazo。
+
+
+2026-11-20：computer_enabled旧快照默认false；需workspace授权、显式视觉模型、全部备用模型支持图片及额外工具预算。computer_observe只读，computer_act/launch_app为审批write；截图只允许这三个工具经VisualToolResult存入同Run工具记录，不扩展GeneratedToolResult附件通道。图片按当前租约读取，审批checkpoint不存Base64；未知动作结果不得重放。仅最近两张截图进入模型，字符/字节预算保守计入Base64。截图排除底部24像素时钟，动作仍核对画面摘要。max_tool_repairs仅新快照默认2，旧默认0，只修正执行前参数，不重新生成已批准参数。详见docs/computer-vision.md。

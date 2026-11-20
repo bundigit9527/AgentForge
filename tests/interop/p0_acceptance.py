@@ -32,6 +32,9 @@ def main():
     parser.add_argument(
         "--browser-script", type=Path, default=Path(__file__).with_name("rakazo_p0.mts")
     )
+    parser.add_argument("--workspace-files", action="store_true")
+    parser.add_argument("--keep-mode-history", action="store_true")
+    parser.add_argument("--compute-port", type=int, default=18766)
     parser.add_argument("--image", default="rakazo/computer:local")
     parser.add_argument("--api-port", type=int, default=18000)
     parser.add_argument("--web-port", type=int, default=15173)
@@ -46,16 +49,24 @@ def main():
     base["PYTHONDONTWRITEBYTECODE"] = "1"
     args.output.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(args.output, 0o700)
-    for port in (args.api_port, args.web_port):
+    for port in (
+        args.api_port,
+        args.web_port,
+        *([args.compute_port] if args.workspace_files else []),
+    ):
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", port))
     image = subprocess.check_output(
-        ["docker", "image", "inspect", "--format", "{{.Id}}", args.image], env=base, text=True
+        ["docker", "image", "inspect", "--format", "{{.Id}}", args.image],
+        env=base,
+        text=True,
     ).strip()
     name = "agentforge-p0-" + uuid4().hex[:12]
     processes = []
     with ExitStack() as resources:
-        state = Path(resources.enter_context(tempfile.TemporaryDirectory(prefix="af-p0-")))
+        state = Path(
+            resources.enter_context(tempfile.TemporaryDirectory(prefix="af-p0-", dir="/tmp"))
+        )
         pool = state / "slots"
         pool.mkdir(mode=0o700)
         password = secrets.token_hex(24)
@@ -119,7 +130,10 @@ def main():
         logins = {}
         for user in ("alice", "bob"):
             identity = Scope(scope.tenant_id, scope.space_id, user)
-            login = {"email": f"{user}@p0.example.test", "password": secrets.token_urlsafe(24)}
+            login = {
+                "email": f"{user}@p0.example.test",
+                "password": secrets.token_urlsafe(24),
+            }
             PasswordLogin(identities).set_password(identity, **login)
             logins[user] = {
                 **login,
@@ -159,6 +173,34 @@ def main():
             "AGENTFORGE_DESKTOP_IDLE_SECONDS": "600",
             "AGENTFORGE_ALLOWED_TOOLS": "example_report@1,text_stats@1",
         }
+        if args.workspace_files:
+            python_image = os.environ.get("AGENTFORGE_PYTHON_IMAGE", "")
+            if not python_image.startswith("sha256:"):
+                raise ValueError("Workspace acceptance requires an immutable Python image")
+            workspace_policy = state / "workspace.json"
+            workspace_policy.write_text(
+                json.dumps(
+                    {
+                        "grants": [
+                            {
+                                "tenant_id": scope.tenant_id,
+                                "space_id": scope.space_id,
+                                "users": ["alice"],
+                            }
+                        ]
+                    }
+                )
+            )
+            common.pop("AGENTFORGE_BROWSER_POLICY_FILE", None)
+            common.update(
+                AGENTFORGE_WORKSPACE_POLICY_FILE=str(workspace_policy),
+                AGENTFORGE_PYTHON_POLICY_FILE=str(workspace_policy),
+                AGENTFORGE_WORKSPACE_OPEN_ENABLED="true",
+                AGENTFORGE_PYTHON_IMAGE=python_image,
+                AGENTFORGE_PYTHON_ENDPOINT=f"http://127.0.0.1:{args.compute_port}",
+                AGENTFORGE_MCP_COMPUTER_TOKEN=secrets.token_hex(32),
+            )
+            args.browser_script = Path(__file__).with_name("rakazo_workspace.mts")
         real = {
             **common,
             **{k: v for k, v in os.environ.items() if k.startswith("AGENTFORGE_MODEL_")},
@@ -169,13 +211,27 @@ def main():
             AGENTFORGE_MODEL_TIMEOUT_SECONDS="120",
         )
         fixture = state / "fixture.json"
-        fixture.write_text(json.dumps({"logins": logins, "model": model.model, "origin": web}))
+        fixture.write_text(
+            json.dumps(
+                {
+                    "logins": logins,
+                    "model": model.model,
+                    "origin": web,
+                    "keepModeHistory": args.keep_mode_history,
+                }
+            )
+        )
         fixture.chmod(0o600)
 
         def start(label, argv, env, cwd=args.repo):
             log = resources.enter_context((args.output / (label + ".log")).open("w"))
             proc = subprocess.Popen(
-                argv, env=env, cwd=cwd, stdout=log, stderr=subprocess.STDOUT, start_new_session=True
+                argv,
+                env=env,
+                cwd=cwd,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
             )
             processes.append(proc)
             return proc
@@ -191,7 +247,27 @@ def main():
                         proc.wait()
 
         resources.callback(stop_all)
-        start("supervisor", [sys.executable, "-m", "agentforge_supervisor.desktop_pool"], common)
+        if args.workspace_files:
+            start(
+                "compute",
+                [
+                    sys.executable,
+                    "-m",
+                    "uvicorn",
+                    "agentforge_supervisor.app:create_app",
+                    "--factory",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(args.compute_port),
+                ],
+                common,
+            )
+        start(
+            "supervisor",
+            [sys.executable, "-m", "agentforge_supervisor.desktop_pool"],
+            common,
+        )
         start(
             "api",
             [
@@ -238,7 +314,10 @@ def main():
                 time.sleep(0.5)
             else:
                 raise RuntimeError("Acceptance services did not become ready")
-        print("P0: isolated PostgreSQL, API, Worker, Supervisor and original Web ready", flush=True)
+        print(
+            "P0: isolated PostgreSQL, API, Worker, Supervisor and original Web ready",
+            flush=True,
+        )
         result = subprocess.run(
             [
                 "node",
@@ -280,7 +359,8 @@ def main():
         if result.returncode:
             raise SystemExit(result.returncode)
         print(
-            "P0: browser acceptance passed; disposing test services and test database", flush=True
+            "P0: browser acceptance passed; disposing test services and test database",
+            flush=True,
         )
 
 

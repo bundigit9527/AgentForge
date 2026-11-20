@@ -49,7 +49,7 @@ class ModelRpcAdapter:
                 "modelId": selected.model,
                 "reasoning": False,
                 "thinkingLevels": [],
-                "supportsImages": False,
+                "supportsImages": selected.supports_images,
                 "maxTokens": selected.max_completion_tokens,
             }
         ]

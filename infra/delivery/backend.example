@@ -41,3 +41,11 @@ AGENTFORGE_WORKSPACE_POLICY_FILE=
 
 # Offline desktop preview; Office requires the optional preview image.
 AGENTFORGE_WORKSPACE_OPEN_ENABLED=false
+
+# Bounded correction before execution only; old snapshots retain zero repairs.
+AGENTFORGE_MODEL_MAX_TOOL_REPAIRS=2
+
+# Explicit image-capable IDs on the deployment route (never infer from model names).
+AGENTFORGE_MODEL_IMAGE_MODELS=
+# New authorized runs only; requires a vision model and workspace grants.
+AGENTFORGE_COMPUTER_TOOLS_ENABLED=false

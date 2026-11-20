@@ -159,3 +159,28 @@ uv run --env-file .env --locked --offline python tests/interop/workspace_model_s
 ```
 
 这会产生真实模型费用。脚本停止测试服务并清理临时数据库/桌面，保留输出目录内的日志与result.json；最终passed=true才表示全部断言通过。模型非确定性可能导致后续运行失败，须查看证据，不能将单次通过解释为任意任务均能成功。下一步对齐Rakazo的视觉观察与受控应用操作，并补原版Web手工审批与预览验收。
+
+
+## 2026-11-18 原版Web验收与状态轮询竞争修复
+
+新增 `tests/interop/rakazo_workspace.mts`，由 `p0_acceptance.py --workspace-files` 启动一次性PostgreSQL、Python计算服务、API、Worker、桌面池及未修改的Rakazo Web。测试经页面输入、审批按钮与刷新继续运行，并验证Team/Private文件修改、版本下拉选择、实际下载字节、桌面canvas、接管/交还，以及拒绝、取消和另一用户的访问限制。两种模式使用独立会话上下文；不将其等同于保留旧上下文的跨模式切换验收。
+
+发现并修复：工作区操作原先以非阻塞方式获取桌面互斥锁，普通状态轮询也可能使它立即返回workspace_busy。现在最多等待1秒获取锁，再执行原有身份、接管、运行租约和占用检查；不重放已发出的操作。新增竞争回归覆盖临时状态轮询后只执行一次文件操作。固定预览器增加不含路径、文件内容、凭据或CDP响应的异常类别诊断。
+
+本轮初始PostgreSQL全套887项通过、测试schema残留0；修复后完整SQLite883项通过、5项专用测试跳过，PostgreSQL工作区/预览专项37项通过。Ruff检查与格式检查通过。页面实际验收结果另见当次result.json，单独的部分检查通过不能代表整体成功。
+
+已知问题保留：首次脚本误切换已经展开的电脑侧栏，已修正；模型可能发布多次中间版本，验收改为检查同文件族、旧新版关联及旧版字节保留。原会话从Team切到Private时曾出现tool_invalid_arguments；另有一次Private预览返回通用失败，尚不能将其唯一归因于互斥锁。示教录制接口未实现，原版桌面仍可能提示无法读取示教状态；不得隐藏或伪造成功。以上失败证据保留在/tmp/af-web-workspace-20261118及-b/-c/-d目录。
+
+复现（输出目录请使用新目录，须事先配置真实模型及不可变Python镜像，启动Colima并构建预览镜像）：
+
+```bash
+uv run --env-file .env --locked --offline python tests/interop/p0_acceptance.py --rakazo-root /Users/jacky/Documents/Ai/rakazo --workspace-files --image agentforge/desktop-preview:acceptance --output .local/acceptance/workspace-web
+```
+
+该模式会产生真实模型费用，测试中的允许/拒绝只针对临时账号；API18000、Web15173、计算服务18766须空闲。默认模式仍使用既有P0浏览器用例；无需修改Rakazo或开发.env。结束清理临时服务、数据库和桌面，不自动停止操作员已有的Colima。
+
+
+最终页面记录：`/tmp/af-web-workspace-20261118-e/result.json` 为passed=true，6个真实Run、11项页面检查全部通过、pageerror为空。Team与Private各完成生成/修改、两次审批、等待审批时刷新、版本下拉及旧版实际下载、可见桌面、接管/交还；额外验证拒绝与取消不产生成功预览记录、另一用户读Run返回404。Private最终截图可见“第二版验收”。两种模式之间清空聊天，因此不覆盖带原历史的跨模式连续任务；前述失败记录与示教提示仍保留，不宣称全部Rakazo能力已经对齐。下一步优先增加非法工具参数的受控纠正与跨模式恢复，再进入视觉模型输入。
+
+
+2026-11-20 增量：显式图片模型、运行隔离截图及受审批电脑操作见 [桌面视觉](computer-vision.md)。原版 Rakazo 未修改。

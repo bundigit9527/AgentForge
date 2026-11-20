@@ -7,6 +7,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
+from agentforge_core.computer import COMPUTER_TOOLS, ScreenImage
 from agentforge_core.models import RunErrorCode
 from agentforge_core.python_execution import GeneratedFile
 from agentforge_core.tools import ToolInvocation, ToolTicket
@@ -60,13 +61,19 @@ class GeneratedToolResult:
 
 
 @dataclass(frozen=True)
+class VisualToolResult:
+    output: dict
+    image: ScreenImage
+
+
+@dataclass(frozen=True)
 class ToolDefinition:
     name: str
     version: int
     description: str
     input_model: type[BaseModel]
     output_model: type[BaseModel]
-    handler: Callable[[BaseModel], dict | GeneratedToolResult]
+    handler: Callable[[BaseModel], dict | GeneratedToolResult | VisualToolResult]
     effect: Literal["pure", "read", "write", "artifact"] = "pure"
     render: Callable[[BaseModel], str] = lambda output: output.model_dump_json()
 
@@ -138,7 +145,14 @@ class ToolRegistry:
                     or (
                         definition.effect == "write"
                         and ref
-                        in {"workspace_save@1", "write_file@1", "write_file@2", "open_path@1"}
+                        in {
+                            "workspace_save@1",
+                            "write_file@1",
+                            "write_file@2",
+                            "open_path@1",
+                            "computer_act@1",
+                            "launch_app@1",
+                        }
                         and ref in write_allowed
                     )
                     or (definition.effect == "read" and ref in read_allowed)
@@ -283,6 +297,12 @@ class ToolExecutor:
                 raise RuntimeFailure(RunErrorCode.TOOL_EXECUTION_FAILED) from None
             try:
                 files = ()
+                image = None
+                if isinstance(raw, VisualToolResult):
+                    if prepared.definition.reference not in COMPUTER_TOOLS or not self.journal:
+                        raise ValueError("Desktop images require a scoped computer journal")
+                    image = ScreenImage.model_validate(raw.image.model_dump())
+                    raw = {**raw.output, "screen": image.metadata()}
                 if isinstance(raw, GeneratedToolResult):
                     if (
                         prepared.definition.reference
@@ -312,6 +332,8 @@ class ToolExecutor:
             ):
                 raise ExecutionStopped() from None
             raise
+        if image is not None:
+            serialized["desktop_image"] = image.model_dump()
         if not self.checkpoint() or (
             self.journal
             and not self.journal.complete(

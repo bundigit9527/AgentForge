@@ -28,11 +28,13 @@ class ConnectModel(BaseModel):
     thinkingLevel: Literal["off"] | None = None
     maxTokens: int | None = Field(default=None, ge=1, le=131072, strict=True)
     contextWindow: int | None = Field(default=None, ge=1025, le=2147483647, strict=True)
-    supportsImages: Literal[False] = False
+    supportsImages: bool = Field(default=False, strict=True)
     maxImagesPerPrompt: int | None = Field(default=None, ge=1, le=1000, strict=True)
 
     @model_validator(mode="after")
     def valid(self):
+        if self.supportsImages and self.provider != "openai-compatible":
+            raise ValueError("Image input requires an explicitly configured compatible model")
         if self.apiKey is not None and (
             not self.apiKey
             or not self.apiKey.isascii()

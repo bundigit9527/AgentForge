@@ -21,6 +21,7 @@ from agentforge_runtime.attachment_tools import (
 from agentforge_runtime.browser_tools import with_browser_tools
 from agentforge_runtime.chat_harness import configured_harness
 from agentforge_runtime.chat_model import RuntimeFailure
+from agentforge_runtime.computer_tools import with_computer_tools
 from agentforge_runtime.config import ModelSettings
 from agentforge_runtime.harness import ExecutionStopped, Harness
 from agentforge_runtime.mcp_tools import with_mcp_tools
@@ -95,6 +96,11 @@ class Worker:
                         claim.run.scope
                     ):
                         raise RuntimeFailure(RunErrorCode.TOOL_NOT_ALLOWED)
+                    if snapshot.computer_enabled:
+                        import os
+
+                        if os.environ.get("AGENTFORGE_COMPUTER_TOOLS_ENABLED") != "true":
+                            raise RuntimeFailure(RunErrorCode.TOOL_NOT_ALLOWED)
                     return True
 
                 registry = self.tool_registry
@@ -161,10 +167,17 @@ class Worker:
                         opening=snapshot.workspace_open,
                         resolve_parent=lambda name: named_parent(self.repository, claim, name),
                     )
+                    if snapshot.computer_enabled:
+                        registry = with_computer_tools(
+                            registry,
+                            lambda tool, args: workspace_request(claim, tool, args),
+                            snapshot.workspace_mode,
+                        )
                     refs = workspace_tools(
                         snapshot.workspace_file_tools,
                         snapshot.workspace_file_alignment,
                         snapshot.workspace_open,
+                        snapshot.computer_enabled,
                     )
                     runtime_tools = (*runtime_tools, *refs)
                     runtime_allowed = (*runtime_allowed, *refs)
@@ -173,7 +186,8 @@ class Worker:
                         *(
                             r
                             for r in refs
-                            if r.split("@")[0] in {"list_files", "attach_file", "read_file"}
+                            if r.split("@")[0]
+                            in {"list_files", "attach_file", "read_file", "computer_observe"}
                         ),
                     )
                 if claim.run.input_files and snapshot.model.provider == "chat_completions":

@@ -20,5 +20,11 @@ class RunToolJournal:
             self.claim, ticket, output=output, content=content, files=files
         )
 
+    def desktop_image(self, call_id):
+        try:
+            return self.repository.desktop_image(self.claim, call_id)
+        except RunConflict:
+            raise RuntimeFailure(RunErrorCode.TOOL_NOT_ALLOWED) from None
+
     def fail(self, ticket: ToolTicket, code: RunErrorCode) -> bool:
         return self.repository.complete_tool(self.claim, ticket, error_code=code)

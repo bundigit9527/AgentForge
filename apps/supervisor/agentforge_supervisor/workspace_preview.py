@@ -2,6 +2,25 @@
 
 
 def open_document(raw, suffix, path):
+    import sys
+
+    try:
+        return render_document(raw, suffix, path)
+    except Exception as error:
+        # Fixed renderer diagnostics only: do not log source bytes, paths or CDP responses.
+        known = {
+            "Preview exceeds budget",
+            "Preview images did not load",
+            "Unsupported preview type",
+        }
+        reason = (
+            str(error) if type(error) is ValueError and str(error) in known else "renderer error"
+        )
+        print(f"Workspace preview failed: {type(error).__name__}: {reason}", file=sys.stderr)
+        raise
+
+
+def render_document(raw, suffix, path):
     import base64
     import html
     import os

@@ -938,6 +938,33 @@ class RunRepository:
             )
             return True
 
+    def desktop_image(self, claim: Claim, call_id: str):
+        from agentforge_core.computer import ScreenImage
+
+        with self.engine.connect() as conn:
+            if not conn.execute(
+                sa.select(runs.c.run_id).where(self._owned(claim, self.clock()))
+            ).first():
+                raise RunConflict("Execution is no longer owned")
+            output = (
+                conn.execute(
+                    sa.select(tool_calls.c.output)
+                    .where(
+                        tool_calls.c.run_id == claim.run.run_id,
+                        tool_calls.c.call_id == call_id,
+                        tool_calls.c.name.in_(["computer_observe", "computer_act", "launch_app"]),
+                        tool_calls.c.version == 1,
+                        tool_calls.c.status == "succeeded",
+                    )
+                    .order_by(tool_calls.c.sequence.desc())
+                )
+                .scalars()
+                .first()
+            )
+            if not output or "desktop_image" not in output:
+                raise RunConflict("Desktop observation is unavailable")
+            return ScreenImage.model_validate(output["desktop_image"])
+
     def list_tool_calls(self, scope: Scope, run_id: str, after: int = 0, limit: int = 100):
         self.get(scope, run_id)
         with self.engine.connect() as connection:

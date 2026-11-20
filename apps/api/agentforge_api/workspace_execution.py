@@ -31,7 +31,15 @@ class RequestBody(BaseModel):
     runId: UUID
     attemptId: UUID
     tool: Literal[
-        "workspace_save", "attach_file", "list_files", "read_file", "write_file", "open_path"
+        "workspace_save",
+        "attach_file",
+        "list_files",
+        "read_file",
+        "write_file",
+        "open_path",
+        "computer_observe",
+        "computer_act",
+        "launch_app",
     ]
     arguments: dict
 
@@ -79,12 +87,19 @@ def mount_workspace_execution(app, store, directory):
             and (
                 tool != "open_path" or os.environ.get("AGENTFORGE_WORKSPACE_OPEN_ENABLED") == "true"
             )
+            and (
+                tool not in {"computer_observe", "computer_act", "launch_app"}
+                or config.computer_enabled
+                and config.model.supports_images
+                and os.environ.get("AGENTFORGE_COMPUTER_TOOLS_ENABLED") == "true"
+            )
             and config.workspace_mode
             and workspace_policy().permits(claim.run.scope)
             and PythonPolicy.from_env().permits(claim.run.scope)
             and PythonSettings.from_env().image == config.python_image
             and (
-                tool not in {"workspace_save", "write_file", "open_path"}
+                tool
+                not in {"workspace_save", "write_file", "open_path", "computer_act", "launch_app"}
                 or arguments["computer_mode"] == config.workspace_mode
             )
             and dispatched_tool(store, claim, tool, arguments)
@@ -133,7 +148,8 @@ def mount_workspace_execution(app, store, directory):
         if not directory or not directory.pool:
             return error("workspace_unavailable", 503)
         slot = directory.select(claim.run.scope, claim.run.agent_id)
-        if not slot or not slot.lock.acquire(blocking=False):
+        # Status/screen polling also briefly holds this mutex. It is not a user takeover.
+        if not slot or not slot.lock.acquire(timeout=1):
             return error("workspace_busy")
         operation = secrets.token_urlsafe(32)
         try:
@@ -177,6 +193,13 @@ def mount_workspace_execution(app, store, directory):
                     contentBase64=base64.b64encode(row["data"]).decode(),
                     sha256=hashlib.sha256(row["data"]).hexdigest(),
                 )
+            elif body.tool in {"computer_observe", "computer_act", "launch_app"}:
+                action = {
+                    "computer_observe": "observeComputer",
+                    "computer_act": "actComputer",
+                    "launch_app": "launchApp",
+                }[body.tool]
+                request = {k: v for k, v in arguments.items() if k != "computer_mode"}
             elif body.tool == "open_path":
                 action, request = "openDocument", {"path": arguments["path"]}
             elif body.tool in {"read_file", "write_file"}:
@@ -207,6 +230,11 @@ def mount_workspace_execution(app, store, directory):
                 return error("workspace_not_allowed", 403)
             if "result" not in reply:
                 code = reply.get("error")
+                if body.tool in {"computer_act", "launch_app"} and code in {
+                    "computer_screen_changed",
+                    "computer_application_missing",
+                }:
+                    return error(code)
                 if body.tool in {"read_file", "write_file"} and code in {
                     "workspace_file_changed",
                     "workspace_file_unsupported",
@@ -215,7 +243,15 @@ def mount_workspace_execution(app, store, directory):
                     return error(code)
                 return error("workspace_failed")
             result = reply["result"]
-            if body.tool in {"workspace_save", "write_file", "open_path"}:
+            if body.tool in {"computer_observe", "computer_act", "launch_app"}:
+                return {**result, "computer_mode": claim.run.execution_config.workspace_mode}
+            if body.tool in {
+                "workspace_save",
+                "write_file",
+                "open_path",
+                "computer_act",
+                "launch_app",
+            }:
                 return {**result, "computer_mode": claim.run.execution_config.workspace_mode}
             if body.tool == "read_file":
                 return result

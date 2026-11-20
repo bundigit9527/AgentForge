@@ -44,7 +44,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--image", default="agentforge/desktop-preview:acceptance")
+    parser.add_argument("--vision", action="store_true")
     args = parser.parse_args()
+    if args.vision:
+        from vision_support import configure_vision
+
+        configure_vision()
     model = ModelSettings.from_env()
     if model.provider != "chat_completions" or not os.environ.get("AGENTFORGE_MODEL_API_KEY"):
         parser.error("Configure a real model and key locally")
@@ -117,6 +122,7 @@ def main():
                 AGENTFORGE_DESKTOP_IDLE_SECONDS="600",
                 AGENTFORGE_ALLOWED_TOOLS="example_report@1,text_stats@1",
                 AGENTFORGE_WORKSPACE_OPEN_ENABLED="true",
+                AGENTFORGE_COMPUTER_TOOLS_ENABLED="true" if args.vision else "false",
                 AGENTFORGE_WORKSPACE_POLICY_FILE=str(policy),
                 AGENTFORGE_PYTHON_POLICY_FILE=str(policy),
                 AGENTFORGE_PYTHON_IMAGE=python_image,
@@ -209,8 +215,11 @@ def main():
                 store = RunRepository(engine, auth_mode="database")
                 artifacts = ArtifactRepository(store)
 
-                def turn(prompt):
-                    rid = rpc("threads.send", {"botId": bot["id"], "text": prompt})["runId"]
+                def turn(prompt, artifact_ids=()):
+                    rid = rpc(
+                        "threads.send",
+                        {"botId": bot["id"], "text": prompt, "artifactIds": list(artifact_ids)},
+                    )["runId"]
                     deadline = time.monotonic() + 600
                     approved = set()
                     while time.monotonic() < deadline:
@@ -252,6 +261,11 @@ def main():
                                     "read_file",
                                     "text_stats",
                                     "example_report",
+                                    *(
+                                        {"computer_observe", "computer_act", "launch_app"}
+                                        if args.vision
+                                        else set()
+                                    ),
                                 }
                                 for n in calls
                             ):
@@ -285,6 +299,10 @@ def main():
                     )
                     evidence["runs"].append(record)
                     print(json.dumps(record), flush=True)
+                    if args.vision:
+                        if run.status.value != "succeeded":
+                            raise RuntimeError("Vision workflow failed: " + str(run.error_code))
+                        return run, rows, len(approved)
                     previews = [
                         output for n, s, output in rows if n == "open_path" and s == "succeeded"
                     ]
@@ -300,6 +318,65 @@ def main():
                     ):
                         raise RuntimeError("Missing generation/save/preview or approvals")
 
+                if args.vision:
+                    from vision_support import challenge
+
+                    raw = challenge()
+                    artifact = rpc(
+                        "artifacts.create",
+                        dict(
+                            botId=bot["id"],
+                            name="layout-check.png",
+                            mimeType="image/png",
+                            contentBase64=base64.b64encode(raw).decode(),
+                        ),
+                    )
+                    run, rows, approved = turn(
+                        "请先用launch_app启动浏览器。然后把附件保存到电脑并用open_path预览。"
+                        "用computer_observe实际看屏幕，检查版面问题：哪个颜色的面板越过内容边框、在哪一侧被裁切？"
+                        "接着通过computer_act按Page_Down一次，再观察下方出现的面板颜色。"
+                        "只根据截图回答，不要读取图片字节或使用Python推断，所有操作等待审批。"
+                        "附件ID：" + artifact["id"],
+                        artifact_ids=[artifact["id"]],
+                    )
+                    screens = [
+                        output["desktop_image"]
+                        for n, status, output in rows
+                        if status == "succeeded" and "desktop_image" in (output or {})
+                    ]
+                    if len(screens) < 3 or approved < 4:
+                        raise RuntimeError("Missing screenshots or action approvals")
+                    for index, screen in enumerate(screens):
+                        (args.output / f"screen-{index}.png").write_bytes(
+                            base64.b64decode(screen["data"])
+                        )
+                    successful = {n for n, status, output in rows if status == "succeeded"}
+                    if (
+                        not {
+                            "launch_app",
+                            "workspace_save",
+                            "open_path",
+                            "computer_observe",
+                            "computer_act",
+                        }
+                        <= successful
+                    ):
+                        raise RuntimeError("Missing vision/action tools")
+                    # Persist only the synthetic answer, no credentials or screenshot payloads.
+                    answer = run.result or ""
+                    text = str(answer)
+                    (args.output / "answer.txt").write_text(text)
+                    if not all(word in text for word in ("红", "右", "绿")):
+                        raise RuntimeError("Model did not identify the visual challenge")
+                    (args.output / "answer.txt").write_text(text)
+                    evidence.update(
+                        passed=True,
+                        visual_input=True,
+                        approved_actions=True,
+                        screenshots=len(screens),
+                    )
+                    print("Real vision/API/Worker/Desktop acceptance passed.", flush=True)
+                    return
                 turn(
                     "请使用PPT生成技能生成一页中文PPT，文件名acceptance.pptx，标题为“第一版验收”，正文为“生成、保存、审批预览”。实际生成文件并发布附件，然后保存该产物到电脑，调用open_path展示预览。需要审批时等待。不要仅给大纲，也不要重复发布同一文件。"
                 )

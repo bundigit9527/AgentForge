@@ -85,6 +85,8 @@ def workspace_env(browser_env, people, tmp_path, monkeypatch):
             ),
         )
         if response.status_code == 409 and response.json().get("error") in {
+            "computer_screen_changed",
+            "computer_application_missing",
             "workspace_file_changed",
             "workspace_file_unsupported",
             "workspace_file_missing",
@@ -481,3 +483,42 @@ module.main()
         if proc.poll() is None:
             proc.kill()
             proc.wait(timeout=5)
+
+
+def test_status_poll_mutex_does_not_reject_workspace_transfer(
+    workspace_env, repository, monkeypatch
+):
+    import threading
+
+    from agentforge_api.desktop import DesktopDirectory
+
+    select = DesktopDirectory.select
+    timers = []
+
+    def during_status_poll(self, *args, **kwargs):
+        slot = select(self, *args, **kwargs)
+        if slot:
+            acquired = threading.Event()
+            release = threading.Event()
+
+            def poll():
+                with slot.lock:
+                    acquired.set()
+                    release.wait(1)
+
+            thread = threading.Thread(target=poll)
+            thread.start()
+            assert acquired.wait(1)
+            timer = threading.Timer(0.05, release.set)
+            timer.start()
+            timers.extend([thread, timer])
+        return slot
+
+    monkeypatch.setattr(DesktopDirectory, "select", during_status_poll)
+    claim, args = claim_tool(workspace_env, repository)
+    try:
+        assert execute(workspace_env[0], claim, "list_files", args).status_code == 200
+        assert len(workspace_env[6]) == 1
+    finally:
+        for thread in timers:
+            thread.join(2)

@@ -92,6 +92,11 @@ class ChatCompletionsModel:
     ) -> Completion:
         if not checkpoint():
             raise ExecutionStopped()
+        if (
+            any(isinstance(m.get("content"), list) for m in messages)
+            and not self.settings.supports_images
+        ):
+            raise RuntimeFailure(RunErrorCode.MODEL_CONFIGURATION_MISMATCH)
         started = time.monotonic()
         try:
             with self._client.stream(
