@@ -33,12 +33,18 @@ def main():
         "--browser-script", type=Path, default=Path(__file__).with_name("rakazo_p0.mts")
     )
     parser.add_argument("--workspace-files", action="store_true")
+    parser.add_argument("--vision", action="store_true")
     parser.add_argument("--keep-mode-history", action="store_true")
     parser.add_argument("--compute-port", type=int, default=18766)
     parser.add_argument("--image", default="rakazo/computer:local")
     parser.add_argument("--api-port", type=int, default=18000)
     parser.add_argument("--web-port", type=int, default=15173)
     args = parser.parse_args()
+    if args.vision:
+        from vision_support import configure_vision
+
+        configure_vision()
+        args.workspace_files = True
     model = ModelSettings.from_env()
     if model.provider != "chat_completions":
         parser.error("Configure a real Chat Completions model explicitly before running")
@@ -185,7 +191,7 @@ def main():
                             {
                                 "tenant_id": scope.tenant_id,
                                 "space_id": scope.space_id,
-                                "users": ["alice"],
+                                "users": ["alice", "bob"] if args.vision else ["alice"],
                             }
                         ]
                     }
@@ -196,20 +202,28 @@ def main():
                 AGENTFORGE_WORKSPACE_POLICY_FILE=str(workspace_policy),
                 AGENTFORGE_PYTHON_POLICY_FILE=str(workspace_policy),
                 AGENTFORGE_WORKSPACE_OPEN_ENABLED="true",
+                AGENTFORGE_COMPUTER_TOOLS_ENABLED="true" if args.vision else "false",
                 AGENTFORGE_PYTHON_IMAGE=python_image,
                 AGENTFORGE_PYTHON_ENDPOINT=f"http://127.0.0.1:{args.compute_port}",
                 AGENTFORGE_MCP_COMPUTER_TOKEN=secrets.token_hex(32),
             )
-            args.browser_script = Path(__file__).with_name("rakazo_workspace.mts")
+            args.browser_script = Path(__file__).with_name(
+                "rakazo_vision.mts" if args.vision else "rakazo_workspace.mts"
+            )
         real = {
             **common,
             **{k: v for k, v in os.environ.items() if k.startswith("AGENTFORGE_MODEL_")},
         }
         real.update(
             AGENTFORGE_MODEL_STREAM="true",
-            AGENTFORGE_MODEL_MAX_ROUNDS="16",
+            AGENTFORGE_MODEL_MAX_ROUNDS="24" if args.vision else "16",
             AGENTFORGE_MODEL_TIMEOUT_SECONDS="120",
         )
+        challenge_file = state / "layout-check.png"
+        if args.vision:
+            from vision_support import challenge
+
+            challenge_file.write_bytes(challenge())
         fixture = state / "fixture.json"
         fixture.write_text(
             json.dumps(
@@ -218,6 +232,7 @@ def main():
                     "model": model.model,
                     "origin": web,
                     "keepModeHistory": args.keep_mode_history,
+                    "challengeFile": str(challenge_file) if args.vision else None,
                 }
             )
         )
@@ -350,7 +365,12 @@ def main():
                 "tools": [
                     dict(r)
                     for r in conn.execute(
-                        sa.select(tool_calls.c.name, tool_calls.c.status)
+                        sa.select(
+                            tool_calls.c.run_id,
+                            tool_calls.c.name,
+                            tool_calls.c.status,
+                            tool_calls.c.error_code,
+                        )
                     ).mappings()
                 ],
                 "passed": result.returncode == 0,

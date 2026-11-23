@@ -26,9 +26,9 @@ uv run --env-file .env.vision --locked --offline python tests/interop/vision_pro
 uv run --env-file .env --env-file .env.vision --locked --offline python tests/interop/workspace_model_smoke.py --vision --output /tmp/agentforge-vision-acceptance
 ```
 
-第二条命令使用一次性 SQLite、账号、API/Worker/Supervisor 和隔离桌面；只批准该合成测试任务的操作，退出清理服务。它不代表原版 Web 的视觉工具交互已验收。首条已通过北京地域 qwen3-vl-plus 图片识别及 Function Calling 验证。
+第二条命令使用一次性 SQLite、账号、API/Worker/Supervisor 和隔离桌面；只批准该合成测试任务的操作，退出清理服务。该脚本验证后端链路；原版 Web 组合验收另用 p0_acceptance.py --vision，命令和证据见 [P0 记录](p0-acceptance.md)。首条已通过北京地域 qwen3-vl-plus 图片识别及 Function Calling 验证。
 
-后续仍需原版 Web 视觉任务/审批/接管组合验收，以及目标 Ubuntu 验收。当前不包含示教录制、任意应用、拖拽、联网桌面、登录态或所有文档页面的自动质量审核。
+原版 Web 视觉任务/审批/接管/双用户隔离组合验收已完成，目标 Ubuntu 验收仍待进行。当前不包含示教录制、任意应用、拖拽、联网桌面、登录态或所有文档页面的自动质量审核。
 
 ## 工具参数纠正
 
@@ -40,4 +40,4 @@ uv run --env-file .env --env-file .env.vision --locked --offline python tests/in
 - PostgreSQL 全套 912 通过；随后截图保留增加一项回归，电脑专项 17 通过。
 - Qwen 真实图片/Function Calling 探测通过。真实 API/Worker/Docker 桌面：launch_app → workspace_save → open_path → computer_observe → computer_act 全部成功，4 次审批，3 张截图；模型正确指出红色面板右侧裁切及翻页后的绿色面板。证据目录 /tmp/af-qwen-desktop-20261120-b。
 - 初次桌面运行因测试附件未绑定被拒绝；后一次画面变化拦截，去除时钟和编码时间后动作通过；仅保留一张截图时最终比较断言失败，保留最近两张不同截图后通过。保留失败记录，不将其计为成功。
-- P0-1 保留历史的 Team/Private 原版 Web 共 11 项检查通过。视觉增量本轮通过后端真实链路，尚未做原版 Web 的完整组合验收。
+- P0-1 保留历史的 Team/Private 原版 Web 共 11 项检查通过。新增原版 Web + 真实 Qwen + PostgreSQL 17 组合验收 14 项通过，涵盖三轮视觉任务、审批刷新、接管与实际键鼠输入、交还后新任务、拒绝/取消及双用户访问隔离。7 个任务中的接管阻止 failed、取消 cancelled 均为预期结果。证据目录 /tmp/af-web-vision-20261120-c；详见 [P0 记录](p0-acceptance.md)。

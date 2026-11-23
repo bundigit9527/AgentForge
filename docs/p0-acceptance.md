@@ -2,7 +2,35 @@
 
 验收日期：2026-11-06。Rakazo Web 基线为 `d165de43`，AgentForge 使用 Python API、Worker、Harness 和 Supervisor。没有修改 Rakazo Web 源码，也没有引入 Node.js 后端；Node.js 只用于原版 Web 和浏览器测试工具。
 
-## 本次完成
+## 2026-11-20：原版 Web 视觉组合验收
+
+已在 macOS / Colima、一次性 PostgreSQL 17、真实北京地域 `qwen3-vl-plus`、Python API/Worker/Supervisor 和原版 Rakazo Web 上完成。共 14 项页面检查、7 个真实任务，无未捕获的页面异常。P0 的本机组合验收已收口；目标 Ubuntu 交付验收仍独立安排。
+
+| 检查范围 | 本轮结果 |
+| --- | --- |
+| 视觉与操作 | Alice Team、保留历史切换到 Private、Bob Private 三轮均通过原版上传/发送/审批，执行 launch_app → workspace_save → open_path → computer_observe → computer_act；模型正确指出红色面板右侧裁切与翻页后的绿色面板。 |
+| 审批刷新 | 等待审批时刷新，effect_id 和参数保持一致；最终回复刷新后仍可见；同一工具调用没有重复执行。 |
+| 双用户访问 | 另一用户无法读取私有 Run、工具记录、审批和附件，也无法为对方 Bot 申请屏幕链接；使用真实审批卡片 ID 代批被拒绝。Team 电脑仍按设计共享画面，不能将其称为屏幕私有。 |
+| 控制权 | Team 接管互斥、两个 Private 可独立接管。电脑动作暂停审批时人工接管，批准后 Agent 动作被阻止；交还不自动重放失败操作，新任务重新观察并审批后可执行。 |
+| 实际鼠标键盘 | 原版 Take control 后等待 noVNC 控制连接及真实画面；鼠标点击、Home 按键后，画面从绿色区域回到红色区域。检查真实画布像素并保存截图，不只检查 controlHolder。 |
+| 拒绝与取消 | 原版 Deny 和 Stop 均阻止 computer_act；取消保持 cancelled，拒绝后的模型说明可正常完成，不把被拒绝的动作记为成功。 |
+
+本轮 7 个任务包括 5 个 succeeded、1 个预期的接管阻止 failed、1 个预期的 cancelled。证据保存在 `/tmp/af-web-vision-20261120-c`：`result.json`、`backend-result.json`、各轮聊天/桌面/模型截图和 `manual-control.png`。结果 JSON 不包含模型密钥、登录密码或签名屏幕链接。原版“Teach a task”仍会显示未实现错误，未隐藏入口；这不属于本轮视觉动作验收。
+
+验收代码位于 `tests/interop/rakazo_vision.mts`，由现有一次性服务脚本的 `--vision` 模式运行。首轮在测试脚本打开面板时出现页面加载竞争，已按原版按钮的实际展开状态等待；随后加强 noVNC 重连和按键生效断言，最终整轮通过。没有修改 Rakazo 或生产执行逻辑。
+
+复现前准备已安装依赖的原版 Rakazo、Chrome、运行中的 Colima、带预览依赖的桌面镜像，以及本机忽略文件 `.env` 和 `.env.vision`。`.env` 的 `AGENTFORGE_PYTHON_IMAGE` 需为已有不可变镜像摘要；视觉文件使用 `AGENTFORGE_VISION_BASE_URL`、`AGENTFORGE_VISION_MODEL`、`AGENTFORGE_VISION_API_KEY`。镜像构建见 [工作区预览](workspace-bridge.md)。API 18000、Web 15173、计算服务 18766 需空闲，均可通过脚本参数调整。
+
+```bash
+uv run --env-file .env --env-file .env.vision --locked --offline python tests/interop/p0_acceptance.py \
+  --rakazo-root /Users/jacky/Documents/Ai/rakazo \
+  --vision --image agentforge/desktop-preview:acceptance \
+  --output .local/acceptance/vision-web
+```
+
+该模式仅在测试进程中切换 Qwen 配置，工具轮次上限为 24；创建两个临时用户，不使用开发库。退出时清理临时数据库、桌面和子进程，不覆盖 `.env` 或 `.env.vision`。脚本要求 Docker 已运行，不负责启动或停止 Colima；本轮验收完成后另行停止了 Colima。以下保留首次验收记录和常规开发启动说明。
+
+## 2026-11-06 基线完成项
 
 - 接通 Activity 运行列表、工具步骤、失败状态与刷新恢复。
 - 接通可见 Chromium 的打开、观察、链接点击、长页面读取、查找和滚动。
