@@ -9,9 +9,15 @@ from uuid import uuid4
 
 import httpx
 from agentforge_connectors.browser import service_configuration
-from agentforge_core.browser import READING_ACTIONS, BrowserInput, browser_result, permitted_url
+from agentforge_core.browser import (
+    FORM_ACTIONS,
+    READING_ACTIONS,
+    BrowserInput,
+    browser_result,
+    permitted_url,
+)
 
-from agentforge_supervisor.browser_fetch import fetch_document
+from agentforge_supervisor.browser_fetch import FORMS_CSP, fetch_document
 
 
 class BrowserDenied(Exception):
@@ -19,6 +25,10 @@ class BrowserDenied(Exception):
 
 
 class BrowserPageChanged(Exception):
+    pass
+
+
+class BrowserActionUnsupported(Exception):
     pass
 
 
@@ -34,11 +44,23 @@ class BrowserPool:
         operation = BrowserInput.model_validate(request["operation"])
         origins = request["origins"]
         state = self.states.get(generation, {})
+        forms = request.get("formOrigins", [])
+        if operation.action in FORM_ACTIONS and not forms:
+            return {"error": "browser_not_allowed"}
         same = state.get("identity") == identity
-        known_page = state.get("state") if operation.action == "observe" else state.get("page")
+        # Only the gateway-verified approved action can continue across an approval pause.
+        if operation.action == "act" and forms and state.get("identity", (None,))[0] == identity[0]:
+            same = True
+        if operation.action == "act" and not permitted_url(operation.url, forms):
+            return {"error": "browser_not_allowed"}
+        known_page = (
+            state.get("state") if operation.action in {"observe", "snapshot"} else state.get("page")
+        )
         if operation.action != "open" and (not same or not known_page):
             return {"error": "browser_page_changed"}
-        if operation.action in READING_ACTIONS and operation.snapshot != state.get("snapshot"):
+        if operation.action in (READING_ACTIONS | {"act"}) and operation.snapshot != state.get(
+            "snapshot"
+        ):
             return {"error": "browser_page_changed"}
         if operation.action == "open" and not permitted_url(operation.url, origins):
             return {"error": "browser_not_allowed"}
@@ -54,6 +76,7 @@ class BrowserPool:
         previous = state.get("state")
         config = {
             "operation": operation.model_dump(),
+            "formOrigins": forms,
             "href": href,
             "state": previous if same else None,
             "closeContext": previous.get("context") if previous else None,
@@ -77,7 +100,9 @@ class BrowserPool:
                 check()
                 page, new_state = self.drive(generation, config, origins, check, saved)
                 check()
-                if not permitted_url(page["url"], origins):
+                if not permitted_url(
+                    page["url"], forms if operation.action == "snapshot" else origins
+                ):
                     raise BrowserDenied()
                 links = []
                 for item in page["links"]:
@@ -92,8 +117,20 @@ class BrowserPool:
                 page = browser_result(
                     operation.action, {**page, "links": links, "snapshot": uuid4().hex}
                 )
+                # Keep form snapshots within the normal tool journal/result budget.
+                if operation.action in FORM_ACTIONS:
+                    while len(json.dumps(page, ensure_ascii=False)) > 19000:
+                        page["truncated"] = True
+                        if page["elements"]:
+                            page["elements"].pop()
+                        elif page["links"]:
+                            page["links"].pop()
+                        else:
+                            page["text"] = page["text"][: len(page["text"]) // 2]
                 saved.update(state=new_state, page=page, snapshot=page["snapshot"])
                 return {"result": page}
+            except BrowserActionUnsupported:
+                return {"error": "browser_action_unsupported"}
             except BrowserPageChanged:
                 return {"error": "browser_page_changed"}
             except BrowserDenied:
@@ -140,11 +177,13 @@ class BrowserPool:
                 for _ in range(200):
                     if not selector.select(max(0, deadline - time.monotonic())):
                         raise RuntimeError("Browser timed out")
-                    line = proc.stdout.readline(128001)
+                    line = proc.stdout.readline(256001)
                     if not line.endswith(b"\n"):
                         raise RuntimeError("Invalid browser response")
                     message = json.loads(line)
                     check()
+                    if message.get("error") == "browser_action_unsupported":
+                        raise BrowserActionUnsupported()
                     if message.get("error") == "browser_page_changed":
                         raise BrowserPageChanged()
                     if "session" in message:
@@ -162,6 +201,12 @@ class BrowserPool:
                         ):
                             raise BrowserDenied()
                         document = fetch_document(req["url"], origins)
+                        if permitted_url(req["url"], config.get("formOrigins", [])):
+                            document["headers"] = [
+                                h
+                                for h in document["headers"]
+                                if h["name"].lower() != "content-security-policy"
+                            ] + [{"name": "Content-Security-Policy", "value": FORMS_CSP}]
                         check()
                         send(document)
                     elif "page" in message:

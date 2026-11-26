@@ -9,9 +9,10 @@ import time
 from uuid import UUID
 
 from agentforge_connectors.browser import BrowserPolicy, service_configuration
-from agentforge_core.browser import READING_ACTIONS, BrowserInput, browser_result
+from agentforge_core.browser import FORM_ACTIONS, READING_ACTIONS, BrowserInput, browser_result
 from agentforge_core.identity import PermissionDenied
 from agentforge_core.models import RunConflict, RunNotFound
+from agentforge_storage.workspace import dispatched_tool
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -47,11 +48,24 @@ def mount_browser_execution(app, store, directory):
             {"error": code}, status_code=status, headers={"Cache-Control": "no-store"}
         )
 
-    def valid(claim):
+    def valid(claim, operation):
         if not claim or not claim.run.agent_id or not claim.run.execution_config:
             return False
         origins = claim.run.execution_config.browser_origins
-        current = BrowserPolicy.from_env().origins(claim.run.scope)
+        policy = BrowserPolicy.from_env()
+        current = policy.origins(claim.run.scope)
+        forms = claim.run.execution_config.browser_form_origins
+        if forms and not set(forms) <= set(policy.origins(claim.run.scope, forms=True)):
+            return False
+        if operation.action in FORM_ACTIONS and not forms:
+            return False
+        if operation.action == "act" and not dispatched_tool(
+            store,
+            claim,
+            "browser_act",
+            {k: operation.model_dump()[k] for k in ("snapshot", "url", "actions")},
+        ):
+            return False
         return bool(origins) and ("*" in current or set(origins) <= set(current))
 
     async def body(request, model):
@@ -66,7 +80,7 @@ def mount_browser_execution(app, store, directory):
             async with asyncio.timeout(5):
                 async for chunk in request.stream():
                     data.extend(chunk)
-                    if len(data) > 8192:
+                    if len(data) > 32768:
                         raise ValueError()
             return model.model_validate_json(data)
         except (ValueError, TimeoutError):
@@ -81,10 +95,10 @@ def mount_browser_execution(app, store, directory):
             entry = operations.get(parsed.operationId)
         if not entry:
             return error("browser_not_allowed", 403)
-        claim, slot, generation, expiry = entry
+        claim, slot, generation, operation, expiry = entry
         current = await run_in_threadpool(store.active_claim, claim.run.run_id, claim.attempt_id)
         try:
-            permitted = valid(current)
+            permitted = valid(current, operation)
         except ValueError:
             permitted = False
         if (
@@ -99,7 +113,7 @@ def mount_browser_execution(app, store, directory):
 
     def execute(parsed):
         claim = store.active_claim(str(parsed.runId), str(parsed.attemptId))
-        if not valid(claim):
+        if not valid(claim, parsed.operation):
             return error("browser_not_allowed", 403)
         if (
             parsed.operation.action in READING_ACTIONS
@@ -123,7 +137,7 @@ def mount_browser_execution(app, store, directory):
             if not entry:
                 entry = slot.lifecycle("boot")
                 slot.sync(entry)
-            if not valid(store.active_claim(claim.run.run_id, claim.attempt_id)):
+            if not valid(store.active_claim(claim.run.run_id, claim.attempt_id), parsed.operation):
                 return error("browser_not_allowed", 403)
             expiry = time.monotonic() + 32
             slot.reader_id = operation
@@ -131,7 +145,7 @@ def mount_browser_execution(app, store, directory):
             slot.browser_entry = entry
             slot.activity = time.monotonic()
             with lock:
-                operations[operation] = (claim, slot, entry["generation"], expiry)
+                operations[operation] = (claim, slot, entry["generation"], parsed.operation, expiry)
         except (RunConflict, RunNotFound, PermissionDenied):
             return error("browser_unavailable")
         finally:
@@ -145,14 +159,16 @@ def mount_browser_execution(app, store, directory):
                     "attemptId": claim.attempt_id,
                     "operationId": operation,
                     "origins": list(claim.run.execution_config.browser_origins),
+                    "formOrigins": list(claim.run.execution_config.browser_form_origins),
                     "operation": parsed.operation.model_dump(),
                 },
             )
-            if not valid(store.active_claim(claim.run.run_id, claim.attempt_id)):
+            if not valid(store.active_claim(claim.run.run_id, claim.attempt_id), parsed.operation):
                 return error("browser_not_allowed", 403)
             if reply.get("error") in {
                 "browser_not_allowed",
                 "browser_page_changed",
+                "browser_action_unsupported",
                 "browser_failed",
             }:
                 return error(reply["error"])

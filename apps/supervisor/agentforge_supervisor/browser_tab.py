@@ -28,6 +28,235 @@ READ_DOCUMENT = """(()=>{
  })()"""
 
 
+FORM_HELPERS = r"""
+const AFForms = (() => {
+	// Form named controls can shadow properties and methods (e.g. name="action").
+	const formProp = (f, k) =>
+		Object.getOwnPropertyDescriptor(HTMLFormElement.prototype, k).get.call(f);
+	const visible = (e) =>
+		e.getClientRects().length > 0 &&
+		getComputedStyle(e).visibility !== "hidden";
+	const clip = (s, n) =>
+		Array.from(String(s || ""))
+			.slice(0, n)
+			.join("");
+	function collect() {
+		const forms = Array.from(document.forms),
+			refs = new Map(),
+			elements = [],
+			signature = [];
+		let truncated = forms.length > 20;
+		let elementSize = 0;
+		forms.slice(0, 20).forEach((f, fi) => {
+			const controls = Array.from(formProp(f, "elements"));
+			let action;
+			try {
+				action = new URL(formProp(f, "action") || location.href, location.href);
+			} catch {
+				return;
+			}
+			const allowed =
+				controls.length <= 40 &&
+				formProp(f, "method").toLowerCase() === "get" &&
+				action.origin === location.origin &&
+				action.protocol === "https:" &&
+				!action.username &&
+				!action.password &&
+				action.href.length <= 2048 &&
+				(!formProp(f, "acceptCharset") ||
+					formProp(f, "acceptCharset").toLowerCase() === "utf-8") &&
+				formProp(f, "enctype") === "application/x-www-form-urlencoded" &&
+				controls.every(
+					(e) =>
+						Node.prototype.contains.call(f, e) &&
+						!e.hasAttribute("form") &&
+						((e.tagName === "INPUT" &&
+							["text", "search", "hidden", "submit"].includes(e.type)) ||
+							e.tagName === "TEXTAREA" ||
+							(e.tagName === "BUTTON" && e.type === "submit")),
+				);
+			signature.push({
+				index: fi,
+				action: action.href,
+				method: formProp(f, "method"),
+				target: formProp(f, "target"),
+				encoding: formProp(f, "enctype"),
+				charset: formProp(f, "acceptCharset"),
+				allowed,
+				controls: allowed
+					? controls.map((e) => ({
+							tag: e.tagName,
+							attrs: Array.from(e.attributes).map((a) => [a.name, a.value]),
+							value: e.value,
+							visible: visible(e),
+							disabled: e.matches(":disabled"),
+							readOnly: !!e.readOnly,
+							label: clip(
+								e.labels
+									? Array.from(e.labels)
+											.map((l) => l.innerText)
+											.join(" ")
+									: e.innerText,
+								120,
+							),
+						}))
+					: [],
+			});
+			if (!allowed) return;
+			controls.forEach((e, ei) => {
+				if (
+					!visible(e) ||
+					e.matches(":disabled") ||
+					e.readOnly ||
+					e.type === "hidden" ||
+					e.value.length > 1000
+				)
+					return;
+				const button = e.tagName === "BUTTON" || e.type === "submit";
+				if (
+					button &&
+					[
+						"formaction",
+						"formmethod",
+						"formenctype",
+						"formtarget",
+						"formnovalidate",
+					].some((a) => e.hasAttribute(a))
+				)
+					return;
+				if (elements.length >= 80) {
+					truncated = true;
+					return;
+				}
+				const ref = `f${fi}e${ei}`;
+				const item = {
+					ref,
+					role: button ? "button" : "textbox",
+					name: clip(
+						e.getAttribute("aria-label") ||
+							(e.labels &&
+								Array.from(e.labels)
+									.map((l) => l.innerText)
+									.join(" ")) ||
+							e.getAttribute("placeholder") ||
+							(button ? e.innerText || e.value : e.name),
+						120,
+					),
+					value: button ? null : e.value,
+					form_url: action.href,
+				};
+				const size = JSON.stringify(item).length;
+				if (elementSize + size > 12000) {
+					truncated = true;
+					return;
+				}
+				elementSize += size;
+				refs.set(ref, e);
+				elements.push(item);
+			});
+		});
+		return { refs, elements, signature, truncated };
+	}
+	function plan(actions) {
+		const current = collect(),
+			values = new Map();
+		let submit = null,
+			form = null;
+		for (const [i, a] of actions.entries()) {
+			const e = current.refs.get(a.ref);
+			if (!e) return null;
+			if (form && form !== e.form) return null;
+			form = e.form;
+			if (a.kind === "click") {
+				if (i !== actions.length - 1 || !(e.type === "submit")) return null;
+				submit = e;
+			} else {
+				if (
+					!["fill", "type"].includes(a.kind) ||
+					e.type === "submit" ||
+					typeof a.text !== "string"
+				)
+					return null;
+				const value =
+					a.kind === "fill" ? a.text : (values.get(e) ?? e.value) + a.text;
+				if (
+					Array.from(value).length > 1000 ||
+					(e.maxLength >= 0 && value.length > e.maxLength)
+				)
+					return null;
+				values.set(e, value);
+			}
+		}
+		let destination = null;
+		if (submit) {
+			const original = Array.from(formProp(form, "elements")),
+				clone = Node.prototype.cloneNode.call(form, true),
+				fields = Array.from(formProp(clone, "elements"));
+			if (fields.length !== original.length) return null;
+			fields.forEach((e, i) => {
+				e.value = values.get(original[i]) ?? original[i].value;
+			});
+			if (!HTMLFormElement.prototype.checkValidity.call(clone)) return null;
+			const button = fields[original.indexOf(submit)],
+				data = new FormData(clone, button),
+				params = new URLSearchParams();
+			for (const [key, value] of data) {
+				if (typeof value !== "string") return null;
+				params.append(
+					key.replace(/\r?\n/g, "\r\n"),
+					value.replace(/\r?\n/g, "\r\n"),
+				);
+			}
+			const url = new URL(
+				formProp(form, "action") || location.href,
+				location.href,
+			);
+			url.search = params.toString();
+			url.hash = "";
+			if (url.href.length > 2048) return null;
+			destination = url.href;
+		}
+		return { current, values, submit, destination };
+	}
+	return {
+		inspect: () => {
+			const s = collect();
+			return {
+				elements: s.elements,
+				truncated: s.truncated,
+				signature: s.signature,
+			};
+		},
+		preflight: (actions) => {
+			const p = plan(actions);
+			return p ? { ok: true, destination: p.destination } : { ok: false };
+		},
+		act: (actions) => {
+			const p = plan(actions);
+			if (!p) return { ok: false };
+			for (const a of actions) {
+				const e = p.current.refs.get(a.ref);
+				e.scrollIntoView({ block: "center" });
+				e.focus();
+				if (a.kind === "click") {
+					Object.getOwnPropertyDescriptor(
+						HTMLFormElement.prototype,
+						"target",
+					).set.call(e.form, "_self");
+					e.click();
+				} else {
+					e.value = a.kind === "fill" ? a.text : e.value + a.text;
+					e.dispatchEvent(new Event("input", { bubbles: true }));
+					e.dispatchEvent(new Event("change", { bubbles: true }));
+				}
+			}
+			return { ok: true };
+		},
+	};
+})();
+"""
+
+
 def document_hash(document):
     stable = {k: document[k] for k in ("url", "title", "text", "links", "truncated")}
     return hashlib.sha256(json.dumps(stable, sort_keys=True).encode()).hexdigest()
@@ -161,11 +390,19 @@ def main():
         def observe():
             return evaluate(OBSERVE)
 
+        def forms(method="inspect", arguments=None):
+            args = "" if arguments is None else json.dumps(arguments)
+            return evaluate(
+                "(()=>{" + FORM_HELPERS + "return AFForms." + method + "(" + args + ");})()"
+            )
+
         def fingerprint(page):
             return hashlib.sha256(json.dumps(page, sort_keys=True).encode()).hexdigest()
 
         operation = config["operation"]
         extended = operation["action"] in {"read", "scroll", "find"}
+        form_action = operation["action"] in {"snapshot", "act"}
+        submitted = False
         if operation["action"] == "open":
             call("Page.navigate", {"url": operation["url"]})
         else:
@@ -181,9 +418,27 @@ def main():
                     )
                 )
             )
+            if operation["action"] == "act":
+                changed = (
+                    page["url"] != operation["url"]
+                    or document_hash(document) != state.get("documentHash")
+                    or fingerprint(forms()) != state.get("formsHash")
+                )
             if changed:
                 print(json.dumps({"error": "browser_page_changed"}), flush=True)
                 return
+            if operation["action"] == "act":
+                preflight = forms("preflight", operation["actions"])
+                if not preflight["ok"]:
+                    print(json.dumps({"error": "browser_action_unsupported"}), flush=True)
+                    return
+                check()
+                # All validation happens before any input; exceptions after this are uncertain.
+                result = forms("act", operation["actions"])
+                if not result["ok"]:
+                    print(json.dumps({"error": "browser_action_unsupported"}), flush=True)
+                    return
+                submitted = bool(preflight["destination"])
             if operation["action"] == "scroll":
                 actions = {
                     "up": "window.scrollBy(0,-innerHeight*0.85)",
@@ -215,7 +470,12 @@ def main():
         deadline = time.monotonic() + 8
         while True:
             loading = evaluate("document.readyState==='loading'||location.href==='about:blank'")
-            if not loading and (operation["action"] == "observe" or extended or navigated):
+            if not loading and (
+                operation["action"] in {"observe", "snapshot"}
+                or (form_action and not submitted)
+                or extended
+                or navigated
+            ):
                 break
             if time.monotonic() > deadline:
                 raise RuntimeError("Page not loaded")
@@ -224,6 +484,13 @@ def main():
         document = evaluate(READ_DOCUMENT)
         check()
         result = reading_page(document, operation) if extended else page
+        form_state = forms() if form_action else None
+        if form_state:
+            result = {
+                **page,
+                "elements": form_state["elements"],
+                "truncated": form_state["truncated"],
+            }
         print(
             json.dumps(
                 {
@@ -233,6 +500,7 @@ def main():
                         "target": target,
                         "hash": fingerprint(page),
                         "documentHash": document_hash(document),
+                        "formsHash": fingerprint(form_state) if form_state else None,
                     },
                 }
             ),

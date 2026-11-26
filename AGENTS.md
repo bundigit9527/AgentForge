@@ -158,7 +158,7 @@ Python 自动文件生成见 docs/python-execution.md。Run 固定 python_image�
 迁移0018增加不可变附件版本关系。新授权 Run 使用 python_execute@2、python_continuity 和冻结的 python_files；旧默认 false/空，绑定旧PPT配方的配置保留v1工具。文件发现限当前用户、Bot、未清空会话的成功任务与显式附件；共享 Run 隐去私人文件清单。实际字节读取必须检查当前租约和权限，只可读取冻结版本或本Run产物。输入别名匹配导出名才建立新版本，原字节不覆盖；文件族按固定顺序加锁分配版本，工具/附件/版本/消息同事务。修改旧版创建有确切parent_id的新版本，不自动合并。容器仍为临时目录，选定输入通过受限协议传入，绝不挂宿主机工作区。详见 docs/python-execution.md。
 
 
-电脑文件互通见 docs/workspace-bridge.md。workspace_enabled 默认false，须同时具备Python连续文件能力和显式workspace授权；Run固定实际电脑模式，workspace_save@1必须加入approval_tools。list_files / attach_file只访问当前Bot工作目录，后者可经受控GeneratedToolResult通道发布附件；不要将这项例外扩展到任意read工具。workspace_save和write_file是仅有的注册write适配器，API须复核活动工具及同参数dispatched台账，不能仅凭服务令牌放行。文件副本按artifact_id生成固定路径，已有内容不符时拒绝覆盖；Team共享风险在原版审批卡片中说明。Supervisor检查执行授权与代次，Agent与人工控制互斥。复制后取消/断线/快照失败可能有未知副作用，禁止自动重放或宣称磁盘已回滚。旧attach_file@1保持path语义；新workspace_file_tools快照支持read_file/write_file和attach_file@2命名版本，shared/、shell/open_path仍待对齐，不能宣传已完全复刻Rakazo。
+电脑文件互通见 docs/workspace-bridge.md。workspace_enabled 默认false，须同时具备Python连续文件能力和显式workspace授权；Run固定实际电脑模式，workspace_save@1必须加入approval_tools。list_files / attach_file只访问当前Bot工作目录，后者可经受控GeneratedToolResult通道发布附件；不要将这项例外扩展到任意read工具。workspace_save和write_file使用显式注册的write适配器，API须复核活动工具及同参数dispatched台账，不能仅凭服务令牌放行。文件副本按artifact_id生成固定路径，已有内容不符时拒绝覆盖；Team共享风险在原版审批卡片中说明。Supervisor检查执行授权与代次，Agent与人工控制互斥。复制后取消/断线/快照失败可能有未知副作用，禁止自动重放或宣称磁盘已回滚。旧attach_file@1保持path语义；新workspace_file_tools快照支持read_file/write_file和attach_file@2命名版本，shared/、shell/open_path仍待对齐，不能宣传已完全复刻Rakazo。
 
 2026-11-10：已知个人模型窗口来自审定目录或显式覆盖；旧连接缺少来源时不得擅自扩大。新Run固定compact_tool_results/context_window_tokens；工具投影只缩短正文，不改审批checkpoint、Skill正文、参数或原始工具记录。context_trimmed支持仅工具裁剪，依旧受当前租约与权限检查。
 
@@ -171,3 +171,6 @@ Python 自动文件生成见 docs/python-execution.md。Run 固定 python_image�
 
 
 2026-11-20：computer_enabled旧快照默认false；需workspace授权、显式视觉模型、全部备用模型支持图片及额外工具预算。computer_observe只读，computer_act/launch_app为审批write；截图只允许这三个工具经VisualToolResult存入同Run工具记录，不扩展GeneratedToolResult附件通道。图片按当前租约读取，审批checkpoint不存Base64；未知动作结果不得重放。仅最近两张截图进入模型，字符/字节预算保守计入Base64。截图排除底部24像素时钟，动作仍核对画面摘要。max_tool_repairs仅新快照默认2，旧默认0，只修正执行前参数，不重新生成已批准参数。详见docs/computer-vision.md。
+
+
+2026-11-26：browser_form_origins旧快照默认空，仅新获精确域名forms授权且剩余工具预算足2项时启用browser_snapshot/browser_act；不挤占已有文件/视觉工具。browser_act为审批write，API验证活动工具与同参数dispatched台账，每步复核当前权限和控制互斥。仅同一Run的已批准动作可跨审批Attempt续接原页面，必须核对最新快照、正文和表单状态；其他任务不得借用。整批在输入前校验，仅已知的browser_page_changed/browser_action_unsupported可作为无动作的失败返回模型；未知结果保持dispatched，不重放。仅匿名同源HTTPS GET表单，不承载凭据、JavaScript、POST或保存登录态。参数和结果沿用工具/审批预算；测试脚本的本地HTML代理不进入生产路径。详见docs/visible-browser.md。

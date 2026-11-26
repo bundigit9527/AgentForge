@@ -28,7 +28,7 @@ def dispatched_tool(store, claim, tool, arguments):
         )
         if arguments not in calls:
             return False
-        if ref not in WORKSPACE_WRITES:
+        if ref not in (*WORKSPACE_WRITES, "browser_act@1"):
             return True
         digest = EffectRequest(
             tool_reference=ref, target="registered-tool", arguments=arguments

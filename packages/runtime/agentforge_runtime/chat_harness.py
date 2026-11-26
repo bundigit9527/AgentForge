@@ -265,8 +265,19 @@ class ChatHarness(Harness):
                                 RunErrorCode.COMPUTER_APPLICATION_MISSING,
                             }
                         )
+                        form_error = (
+                            execution_config is not None
+                            and bool(execution_config.browser_form_origins)
+                            and invocation.definition.reference == "browser_act@1"
+                            and error.code
+                            in {
+                                RunErrorCode.BROWSER_PAGE_CHANGED,
+                                RunErrorCode.BROWSER_ACTION_UNSUPPORTED,
+                            }
+                        )
                         if (
-                            not computer_error
+                            not form_error
+                            and not computer_error
                             and not web_error
                             and not file_error
                             and not (
@@ -283,7 +294,12 @@ class ChatHarness(Harness):
                             {
                                 "error": error.code.value,
                                 "message": (
-                                    "No desktop action was performed. Observe again "
+                                    "No form action was performed. "
+                                    "Call browser_snapshot for current "
+                                    "elements and request new approval. Only anonymous same-origin "
+                                    "GET forms are supported; do not repeat unsupported operations."
+                                    if form_error
+                                    else "No desktop action was performed. Observe again "
                                     "and request new approval, or report the missing "
                                     "application. Do not repeat unavailable launches."
                                     if computer_error

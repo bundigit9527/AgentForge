@@ -16,9 +16,12 @@ class BrowserGrant(BaseModel):
     space_id: str = Field(min_length=1, max_length=128)
     users: tuple[str, ...] = Field(min_length=1, max_length=100)
     origins: tuple[Origin, ...] = Field(min_length=1, max_length=32)
+    forms: bool = Field(default=False, strict=True)
 
     @model_validator(mode="after")
     def explicit_users(self):
+        if self.forms and "*" in self.origins:
+            raise ValueError("Form access requires exact origins")
         if any(not u.strip() or len(u) > 128 or u == "*" for u in self.users):
             raise ValueError("Specify explicit browser users")
         return self
@@ -28,7 +31,7 @@ class BrowserPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     grants: tuple[BrowserGrant, ...] = Field(default=(), max_length=100)
 
-    def origins(self, scope):
+    def origins(self, scope, *, forms=False):
         return tuple(
             sorted(
                 {
@@ -36,6 +39,7 @@ class BrowserPolicy(BaseModel):
                     for g in self.grants
                     if (g.tenant_id, g.space_id) == (scope.tenant_id, scope.space_id)
                     and scope.user_id in g.users
+                    and (not forms or g.forms)
                     for o in g.origins
                 }
             )
@@ -54,6 +58,40 @@ class BrowserPolicy(BaseModel):
             return cls.model_validate_json(data)
         except (ValueError, OSError):
             raise ValueError("Invalid browser policy file") from None
+
+
+def prepare_browser(scope, config):
+    from agentforge_core.execution import ExecutionSnapshot
+
+    policy = BrowserPolicy.from_env()
+    origins = policy.origins(scope) if config.model.provider == "chat_completions" else ()
+    approvals = tuple(r for r in config.approval_tools if r != "browser_act@1")
+    base = ExecutionSnapshot.model_validate(
+        {
+            **config.model_dump(),
+            "browser_origins": origins,
+            "browser_reading": bool(origins),
+            "browser_form_origins": (),
+            "approval_tools": approvals,
+        }
+    )
+    return base
+
+
+def prepare_browser_forms(scope, config):
+    """Allocate optional form tools after existing capabilities; never displace them."""
+    from agentforge_core.execution import ExecutionSnapshot
+
+    forms = BrowserPolicy.from_env().origins(scope, forms=True) if config.browser_origins else ()
+    if forms and len(config.tool_references) <= 14:
+        return ExecutionSnapshot.model_validate(
+            {
+                **config.model_dump(),
+                "browser_form_origins": forms,
+                "approval_tools": (*config.approval_tools, "browser_act@1"),
+            }
+        )
+    return config
 
 
 def service_configuration():

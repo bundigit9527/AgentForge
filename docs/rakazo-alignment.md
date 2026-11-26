@@ -1,6 +1,6 @@
 # 与 Rakazo 对齐的架构基线
 
-更新日期为2026-11-20。原版Web兼容基线为Rakazo `d165de43`，本轮文件实现核查本地源码`9218c401`；AgentForge目标迁移为`0019`。各段历史验收保留当时范围，不代表后续增量已经过真实环境验收。
+更新日期为2026-11-26。原版Web兼容基线为Rakazo `d165de43`，本轮文件实现核查本地源码`9218c401`；AgentForge目标迁移为`0019`。各段历史验收保留当时范围，不代表后续增量已经过真实环境验收。
 
 P0 收口、真实 Web / 模型 / 桌面验收和配置说明见 [P0 记录](p0-acceptance.md)。本轮联网工具回归通过 SQLite 704 项（12 项跳过）和 PostgreSQL 716 项（包含原版客户端互操作）；真实 DeepSeek 搜索与读取验收见 [联网工具](web-tools.md)。这些结果不代表 Ubuntu 生产验收。
 
@@ -8,12 +8,12 @@ P0 收口、真实 Web / 模型 / 桌面验收和配置说明见 [P0 记录](p0-
 
 上下文差异：本地 Rakazo 默认 `retrieval` 策略，提供历史回查、按模型窗口保留内容及有界缩减旧工具结果，另有后台摘要路径；AgentForge 目前保留完整轮次裁剪。中文联网任务的字节预算与裁剪审计校验不一致已修复，详见 [上下文管理](context-management.md)。
 
-## 2026-11-20 全局进展与下一步
+## 2026-11-26 全局进展与下一步
 
 主链路已具备原版 Web 登录/模型/聊天、Python Harness 工具循环、审批恢复、Skill 发现/读取、受控远程 MCP、联网搜索、文件生成和版本，以及 Team/Private 桌面。新增视觉模型能力、computer_observe、computer_act、launch_app，截图随同一 Harness 请求传给模型；不修改 Rakazo。仍是部分功能对齐，不是完整替代。
 
 1. P0 本机收口已完成：原版 Web + 真实 Qwen + PostgreSQL 17 共 14 项组合检查通过，涵盖视觉任务、审批刷新、实际键鼠接管、交还后新任务、拒绝/取消和双用户隔离；[证据与复现](p0-acceptance.md)。
-2. P1 浏览器：按原版页面工具补输入、表单和受控登录态；外部业务提交先设计结果核对，避免未知副作用重放。
+2. P1 浏览器第一批已完成：元素引用快照、受审批的 fill/type、匿名同源 GET 提交、相同 Run 的审批续接；真实 Chromium 10 项检查通过。[配置与验收](visible-browser.md)。与原版仍有 JavaScript、fill_secret、持久登录态和通用提交差距，下一批先扩受控网络与凭据边界，再做原版 Web/真实模型验收。
 3. P1 上下文：历史检索、来源可追溯的语义压缩和长期记忆；保持清空、授权与快照语义。
 4. P1 Skill/MCP：Skill 资源包与模型侧版本维护、原版 MCP 管理页；不将技能内容视作权限。
 5. P2 调度协作：独立 Task/Routine、通用 ask_user、执行中追加消息与子任务取消传播。继续使用 Python 队列。
@@ -41,7 +41,7 @@ P0 收口、真实 Web / 模型 / 桌面验收和配置说明见 [P0 记录](p0-
 | 桌面生命周期与文件 | 默认空闲阈值为十分钟，满足条件后保存工作区并挂起。提供终端及文件接口 | 可观看、接管和交还。Files 可列目录、预览、下载，持有控制权才可上传。Team 的 Files 默认进入各 Bot 目录，但桌面和终端共享。Compose 桌面池在正常停止时归档 /workspace，启动时按原作用域恢复；单次桌面最长四小时。独立 Terminal 可在接管期间使用交互 Shell，与 Files 使用同一 Bot 目录。Compose 支持按空闲时间挂起，停机可列目录及预览文本；跨主机恢复仍待现场验收。 |
 | Activity 与执行记录 | 原版 runs.list、工具步骤及会话事件回放 | 已接通当前用户的活动列表和最近 20 条记录；成功工具保存次数与耗时，失败／中断明确提示，刷新可恢复。尚未实现独立业务 Task 和 Routine。 |
 | 联网搜索与抓取 | 内置 web_search / web_fetch，默认 DuckDuckGo，无需 Computer | Python Worker 已接入同名工具和统一审计；支持 DuckDuckGo 与 Bing RSS，按用户授权访问公开 HTTPS，来源正文为不可信资料。默认关闭；本机已用 Bing RSS + DeepSeek 验收。无 HTTP 明文、登录、JavaScript、PDF 或实时行情专用数据源。 |
-| 浏览器 | 通用浏览器工具提供导航、观察和页面操作 | 新增 Python browser_open / browser_observe / browser_follow，按 Run 授权驱动所属 Computer 的可见 Chromium。支持公网 HTTPS 或指定来源的匿名 HTML 分段读取、查找、滚动和链接点击；无 JavaScript、表单输入与登录态复用，尚未达到 Rakazo 的完整浏览器能力。固定财经工具保留。 |
+| 浏览器 | 通用浏览器工具提供导航、观察和页面操作 | 新增 Python browser_open / browser_observe / browser_follow，按 Run 授权驱动所属 Computer 的可见 Chromium。支持公网 HTTPS 或指定来源的匿名 HTML 分段读取、查找、滚动和链接点击；新增 browser_snapshot / browser_act 的显式域名表单填写与审批 GET 提交；无 JavaScript、保存凭据及登录态复用，尚未达到 Rakazo 的完整浏览器能力。固定财经工具保留。 |
 | 产物与记忆 | 文件产物、版本和 MemoryProvider | 已支持Python生成Office等文件、确定版本连续编辑、电脑文本读写和聊天附件互通。新attach_file@3按同用户／Bot历史名称归族，write_file@2自动创建目录；HTML/GIF/WebP等格式已补齐。已支持离线桌面预览及受控视觉工具；长期记忆、企业知识检索与完整文档质量审核待实现。[文件对标](workspace-bridge.md) |
 
 Rakazo 对照入口为 `apps/api/src/router.ts`、`apps/worker/src/index.ts` 和 `packages/adapters/src/` 下的 `pi-runtime.ts`、`approval-effect.ts`、`sandbox-factory.ts`、`browser-tools.ts`。AgentForge 对应入口包括 [oRPC 路由](../apps/api/agentforge_api/orpc.py)、[Python Harness](../packages/runtime/agentforge_runtime/chat_harness.py)、[桌面代理](../apps/api/agentforge_api/desktop.py)、[财经网页工具](../apps/supervisor/agentforge_supervisor/visible_news.py) 和 [文件产物存储](../packages/storage/agentforge_storage/artifacts.py)。
@@ -79,7 +79,7 @@ Rakazo 对照入口为 `apps/api/src/router.ts`、`apps/worker/src/index.ts` 和
 | 1c 已接通 | 接通停机 Files 的目录与文本预览。Supervisor 读取最近一次完整归档并校验作用域和路径。 | 停机后列出并预览文件，运行容器数保持不变。覆盖 Team / Private 同名文件、跨空间访问和符号链接。 |
 | 2 已接通 | 打通原版聊天附件。核对 artifacts 与 threads.send 契约，贯通上传、仅附件发送、按 Run 授权读取及结果文件返回。 | 从原版聊天上传文件并发起任务；核对工具实际读到的内容、刷新后附件可用、跨用户引用被拒绝。 |
 | 3a 已接通 | 原版 runs.list Activity、工具执行中状态、完成步骤与耗时、失败／中断提示、刷新恢复。 | 核对两用户隔离、审批等待、取消、过期重试和 SSE 回放；不把未确认结果标为成功。 |
-| 3b 首版已接通 | 扩展可见浏览器工具，从固定财经流程推进到授权网站的导航、观察、点击；配合原版 Activity 展示真实工具操作。 | 首版验收公开站点的导航、读取与点击、来源返回、控制互斥和取消。新增长页面分段、页面内查找和滚动；复杂网站检索、登录、输入和业务提交继续作为后续目标。 |
+| 3b 首版已接通 | 扩展可见浏览器工具，从固定财经流程推进到授权网站的导航、观察、点击；配合原版 Activity 展示真实工具操作。 | 首版验收公开站点的导航、读取与点击、来源返回、控制互斥和取消。新增长页面分段、页面内查找和滚动；匿名 GET 表单的引用式填写与审批提交已补齐；JavaScript 网站、登录和通用业务提交继续作为后续目标。 |
 
 浏览器首版配置及已保留差异见 [可见浏览器](visible-browser.md)。后续补页面操作与外部副作用恢复，再按原版产品域推进持久记忆及上下文压缩，再做独立 Task、Routine 和看板。邮箱注册已支持显式开关与独立个人空间；邮件验证、找回密码、删除账号与 OIDC 后续按原版部署配置分别验收。每项先确认原版页面入口、协议和权限语义，再排入开发。
 

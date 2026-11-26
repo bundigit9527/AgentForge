@@ -27,6 +27,7 @@ class RunErrorCode(StrEnum):
     BROWSER_BUSY = "browser_busy"
     BROWSER_PAGE_CHANGED = "browser_page_changed"
     BROWSER_FAILED = "browser_failed"
+    BROWSER_ACTION_UNSUPPORTED = "browser_action_unsupported"
     COMPUTER_SCREEN_CHANGED = "computer_screen_changed"
     COMPUTER_APPLICATION_MISSING = "computer_application_missing"
     WORKSPACE_FILE_CHANGED = "workspace_file_changed"

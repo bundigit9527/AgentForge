@@ -39,8 +39,42 @@ READING_TOOLS = ("browser_read@1", "browser_scroll@1", "browser_find@1")
 READING_ACTIONS = {"read", "scroll", "find"}
 
 
-def browser_tools(reading=False):
-    return BROWSER_TOOLS + (READING_TOOLS if reading else ())
+FORM_TOOLS = ("browser_snapshot@1", "browser_act@1")
+FORM_ACTIONS = {"snapshot", "act"}
+
+
+def browser_tools(reading=False, forms=False):
+    return BROWSER_TOOLS + (READING_TOOLS if reading else ()) + (FORM_TOOLS if forms else ())
+
+
+class BrowserAction(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    kind: Literal["fill", "type", "click"]
+    ref: str = Field(pattern=r"^f[0-9]{1,2}e[0-9]{1,2}$")
+    text: str | None = Field(default=None, max_length=1000)
+
+    @model_validator(mode="after")
+    def check_text(self):
+        if (self.kind == "click") != (self.text is None):
+            raise ValueError("Fill/type require text; click takes no text")
+        if self.text and any(ord(c) < 32 and c not in "\n\t" for c in self.text):
+            raise ValueError("Use plain form text")
+        return self
+
+
+class BrowserAct(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    snapshot: str = Field(pattern=r"^[a-f0-9]{32}$")
+    url: WebUrl
+    actions: list[BrowserAction] = Field(min_length=1, max_length=8)
+
+    @model_validator(mode="after")
+    def submission_last(self):
+        if any(a.kind == "click" for a in self.actions[:-1]):
+            raise ValueError("A form submission must be the final action")
+        if sum(len(a.text or "") for a in self.actions) > 2000:
+            raise ValueError("Form input budget exceeded")
+        return self
 
 
 def permitted_url(url, origins):
@@ -50,7 +84,8 @@ def permitted_url(url, origins):
 
 class BrowserInput(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    action: Literal["open", "observe", "follow", "read", "scroll", "find"]
+    action: Literal["open", "observe", "follow", "read", "scroll", "find", "snapshot", "act"]
+    actions: list[BrowserAction] | None = Field(default=None, min_length=1, max_length=8)
     url: WebUrl | None = None
     snapshot: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
     link: str | None = Field(default=None, pattern=r"^[0-9]{1,3}$")
@@ -65,6 +100,8 @@ class BrowserInput(BaseModel):
         allowed = {
             "open": {"url"},
             "observe": set(),
+            "snapshot": set(),
+            "act": {"snapshot", "url", "actions"},
             "follow": {"snapshot", "link"},
             "read": {"snapshot", "offset", "links_offset"},
             "scroll": {"snapshot", "direction"},
@@ -85,6 +122,10 @@ class BrowserInput(BaseModel):
             raise ValueError("Observe takes no target")
         if self.action == "follow" and (self.url or not self.snapshot or not self.link):
             raise ValueError("Follow requires a snapshot and link")
+        if self.action == "act":
+            BrowserAct.model_validate(
+                {k: self.model_dump()[k] for k in ("snapshot", "url", "actions")}
+            )
         return self
 
 
@@ -118,8 +159,28 @@ class BrowserReading(BrowserPage):
     document_height: int = Field(ge=0)
 
 
+class BrowserElement(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    ref: str = Field(pattern=r"^f[0-9]{1,2}e[0-9]{1,2}$")
+    role: Literal["textbox", "button"]
+    name: str = Field(max_length=120)
+    value: str | None = Field(default=None, max_length=1000)
+    form_url: WebUrl
+
+
+class BrowserSnapshot(BrowserPage):
+    elements: list[BrowserElement] = Field(max_length=80)
+    truncated: bool
+
+
 def browser_result(action, value):
-    model = BrowserReading if action in READING_ACTIONS else BrowserPage
+    model = (
+        BrowserSnapshot
+        if action in FORM_ACTIONS
+        else BrowserReading
+        if action in READING_ACTIONS
+        else BrowserPage
+    )
     return model.model_validate(value).model_dump()
 
 

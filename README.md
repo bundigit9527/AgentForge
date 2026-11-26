@@ -22,7 +22,7 @@ AgentForge 致力于连接企业知识、业务工作流、Agent 和 Skill，让
 - [上下文管理](docs/context-management.md)：纯 Python Harness 的字符预算、完整历史轮次裁剪与调试。
 - [Agent 与会话](docs/conversations.md)：Agent 版本、消息、执行配置快照、尝试记录及手动调试。
 - [版本化工具](docs/tools.md)：工具注册、允许列表、输入输出验证、执行记录和调试。
-- [可见浏览器](docs/visible-browser.md)：Python 工具驱动所属 Computer 的 Chromium，访问公开 HTML、读取与点击链接。
+- [可见浏览器](docs/visible-browser.md)：Python 工具驱动所属 Computer 的 Chromium，访问公开 HTML、读取与点击链接；新增显式授权的表单填写、审批提交。
 - [联网搜索与网页读取](docs/web-tools.md)：Python Harness 自主检索公开来源、读取正文并引用链接，无需启动 Computer。
 - [MCP 远程工具](docs/mcp.md)：只读工具发现、Agent 绑定、执行审计和本地演示。
 - [Skill 与广场安装](docs/skills.md)：内置技能、HTTP Hub、版本安装与按需读取。

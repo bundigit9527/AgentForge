@@ -137,16 +137,22 @@ class Worker:
                     runtime_allowed = (*runtime_allowed, *web_refs)
                     allowed_reads = (*allowed_reads, *web_refs)
                 if snapshot.browser_origins:
-                    browser_refs = browser_tools(snapshot.browser_reading)
+                    browser_refs = browser_tools(
+                        snapshot.browser_reading, bool(snapshot.browser_form_origins)
+                    )
                     registry = with_browser_tools(
                         registry,
                         lambda arguments: browser_request(claim, arguments),
                         snapshot.browser_origins,
                         reading=snapshot.browser_reading,
+                        forms=bool(snapshot.browser_form_origins),
                     )
                     runtime_tools = (*runtime_tools, *browser_refs)
                     runtime_allowed = (*runtime_allowed, *browser_refs)
-                    allowed_reads = (*allowed_reads, *browser_refs)
+                    allowed_reads = (
+                        *allowed_reads,
+                        *(r for r in browser_refs if r != "browser_act@1"),
+                    )
                 if snapshot.python_image:
                     registry = with_python_tool(
                         registry,

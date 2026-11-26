@@ -63,6 +63,12 @@ class ApprovalExecution:
                 RunErrorCode.COMPUTER_APPLICATION_MISSING,
             }
             safe_failure_refs = {"computer_act@1", "launch_app@1"}
+        if ref == "browser_act@1":
+            known_errors = {
+                RunErrorCode.BROWSER_PAGE_CHANGED,
+                RunErrorCode.BROWSER_ACTION_UNSUPPORTED,
+            }
+            safe_failure_refs = {ref}
         if (
             ref in safe_failure_refs
             and effect["status"] == "failed"

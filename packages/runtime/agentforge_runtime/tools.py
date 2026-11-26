@@ -147,6 +147,7 @@ class ToolRegistry:
                         and ref
                         in {
                             "workspace_save@1",
+                            "browser_act@1",
                             "write_file@1",
                             "write_file@2",
                             "open_path@1",

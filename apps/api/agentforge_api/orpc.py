@@ -5,7 +5,6 @@ import json
 import logging
 import time
 
-from agentforge_connectors.browser import BrowserPolicy
 from agentforge_connectors.model_manager import DEEPSEEK
 from agentforge_connectors.web import prepare_web
 from agentforge_contracts.rakazo import (
@@ -262,25 +261,13 @@ def mount_orpc(app, store, model_configuration, tool_allowlist, browser, authent
         from agentforge_connectors.python_execution import prepare_python
 
         config = model_adapter.manager.prepare_run(scope, config, connection)
-        origins = (
-            BrowserPolicy.from_env().origins(scope)
-            if config.model.provider == "chat_completions"
-            else ()
-        )
-        config = prepare_web(
-            scope,
-            ExecutionSnapshot.model_validate(
-                {
-                    **config.model_dump(),
-                    "browser_origins": origins,
-                    "browser_reading": bool(origins),
-                }
-            ),
-        )
+        from agentforge_connectors.browser import prepare_browser, prepare_browser_forms
+
+        config = prepare_web(scope, prepare_browser(scope, config))
         config = prepare_python(scope, config)
         from agentforge_connectors.workspace import prepare_workspace
 
-        config = prepare_workspace(scope, config)
+        config = prepare_browser_forms(scope, prepare_workspace(scope, config))
         return skill_adapter.prepare_run(scope, text, config, connection=connection)
 
     def me(scope):

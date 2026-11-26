@@ -1,14 +1,14 @@
 # AgentForge 开发路线图
 
-状态：以原版 Rakazo `d165de43` 为兼容基线，Python Harness 为执行引擎。更新日期：2026-11-20。当前能力以本节及 [对齐矩阵](rakazo-alignment.md) 为准，下方阶段记录保留各自当时的验收范围。
+状态：以原版 Rakazo `d165de43` 为兼容基线，Python Harness 为执行引擎。更新日期：2026-11-26。当前能力以本节及 [对齐矩阵](rakazo-alignment.md) 为准，下方阶段记录保留各自当时的验收范围。
 
 本路线图基于 [项目架构](architecture.md)，以可验证的业务流程推进，不预设未经验证的工期或并发容量。
 
-## 当前工程状态（2026-11-20）
+## 当前工程状态（2026-11-26）
 
 P0-1 保留历史的 Team→Private 切换已完成原版 Web 11 项检查；新增工具参数执行前有限纠正，审批暂停不重置预算。P0-2/P0-3 已实现显式模型图片能力、computer_observe、受审批的 computer_act/launch_app 和运行隔离截图；默认不开启。Qwen 合成图片与工具调用探测通过，真实桌面四次审批、观察与翻页后的视觉比较已通过；验收及限制见 [视觉工具](computer-vision.md)。新增原版 Web + Qwen + 一次性 PostgreSQL 的视觉/审批刷新/接管/双用户组合验收 14 项通过，已完成本机 P0 收口，记录见 [P0 验收](p0-acceptance.md)。Ubuntu 交付验收仍待进行。
 
-下一步按下方 P1-1 推进动态网页：先对照 Rakazo 的输入/表单调用及登录态范围，设计并实现 Python 受控页面输入，在隔离测试站点验收搜索表单与双用户会话；会产生外部写入的提交继续经过审批和结果核对。随后推进历史回查/摘要、Skill 资源包与 MCP 管理；Task/Routine 单独安排。Ubuntu 镜像、外部 PostgreSQL、升级和备份恢复作为交付验证线并行准备。
+P1-1 第一批已实现：Python `browser_snapshot` / `browser_act` 支持显式授权的匿名同源 GET 表单，完成填写、审批续接、可见提交和结果读取；真实 Chromium 10 项检查通过，配置及边界见 [可见浏览器](visible-browser.md)。保留原版 Web 与 Python Harness，新增能力不占用已满额的工具集。P1 尚未整体完成。下一批继续补受控网络下的 JavaScript 页面、凭据保管与登录态隔离，并通过原版 Web + 真实模型验收；业务提交先定义结果核对和未知副作用处理。随后推进历史回查/摘要、Skill 资源包与 MCP 管理；Task/Routine 单独安排。Ubuntu 镜像、外部 PostgreSQL、升级和备份恢复作为交付验证线并行准备。
 
 以下保留前轮验收与规划背景。
 

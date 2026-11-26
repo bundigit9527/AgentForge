@@ -75,6 +75,7 @@ class ExecutionSnapshot(BaseModel):
     browser_origins: tuple[Origin, ...] = Field(default=(), max_length=32)
     # Historical runs retain their original tool set.
     browser_reading: bool = Field(default=False, strict=True)
+    browser_form_origins: tuple[Origin, ...] = Field(default=(), max_length=32)
     web_origins: tuple[Origin, ...] = Field(default=(), max_length=32)
     web_search_endpoint: WebUrl | None = None
     python_image: str | None = Field(default=None, pattern=r"^sha256:[a-f0-9]{64}$")
@@ -114,7 +115,11 @@ class ExecutionSnapshot(BaseModel):
             *(("web_fetch@1",) if self.web_origins else ()),
             *(("web_search@1",) if self.web_search_endpoint else ()),
             *(t.reference for t in self.mcp_tools),
-            *(browser_tools(self.browser_reading) if self.browser_origins else ()),
+            *(
+                browser_tools(self.browser_reading, bool(self.browser_form_origins))
+                if self.browser_origins
+                else ()
+            ),
         )
 
     @model_validator(mode="after")
@@ -162,6 +167,13 @@ class ExecutionSnapshot(BaseModel):
             raise ValueError("Backup models require Chat Completions")
         if self.mcp_tools and self.model.provider != "chat_completions":
             raise ValueError("MCP tools require a real-model execution profile")
+        if self.browser_form_origins and (
+            not self.browser_reading
+            or "*" in self.browser_form_origins
+            or not all(permitted_url(o, self.browser_origins) for o in self.browser_form_origins)
+            or "browser_act@1" not in self.approval_tools
+        ):
+            raise ValueError("Forms require explicit browser origins and action approval")
         if self.browser_reading and not self.browser_origins:
             raise ValueError("Reading tools require browser origins")
         if self.browser_origins and self.model.provider != "chat_completions":

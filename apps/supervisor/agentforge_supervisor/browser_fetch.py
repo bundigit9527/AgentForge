@@ -16,6 +16,11 @@ CSP = (
 )
 
 
+FORMS_CSP = CSP.replace("form-action 'none'", "form-action 'self'").replace(
+    "sandbox allow-same-origin", "sandbox allow-same-origin allow-forms"
+)
+
+
 def public_addresses(host):
     addresses = list(
         dict.fromkeys(row[4][0] for row in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM))

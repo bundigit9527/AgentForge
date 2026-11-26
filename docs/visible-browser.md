@@ -2,7 +2,7 @@
 
 自主搜索与正文抓取已通过独立的 `web_search` / `web_fetch` 实现，见 [联网工具](web-tools.md)。这两项工具在 Worker 中运行，不显示在电脑画面；需要展示页面操作时仍使用下方可见浏览器链路，其动态网页限制不因搜索工具上线而改变。
 
-对应 Rakazo `d165de43` 的 `browser-tools.ts` / `ComputerBrowserProvider`：工具应控制 Computer 上实际显示的 Chromium，而不是后台抓取后假装电脑已经操作。Rakazo 提供 navigate / snapshot / act（click、fill、type），工具入口未写死财经域名。AgentForge 以 Python 实现公开网页的导航、分段读取、查找、滚动和链接点击，尚未完整复刻这些动作。
+对应 Rakazo `d165de43` 的 `browser-tools.ts` / `ComputerBrowserProvider`：工具应控制 Computer 上实际显示的 Chromium，而不是后台抓取后假装电脑已经操作。Rakazo 提供 navigate / snapshot / act（click、fill、type），工具入口未写死财经域名。AgentForge 以 Python 实现公开网页的导航、分段读取、查找、滚动和链接点击，新增表单元素快照及受审批的 fill / type / submit；当前仅支持匿名同源 GET 表单，尚未完整复刻 Rakazo。
 
 ## 已实现的链路
 
@@ -50,6 +50,42 @@ Docker 交付：将 JSON 放到交付目录的 `config/browser.json`；在 `.env
 
 当前授权在原版 RPC 新建 Run 时加入快照。REST 创建的普通 Agent / 会话不会自动加入该能力。策略撤销逐操作生效；已有 Run 不追随新增的网站权限。模拟模型保持无浏览器工具。
 
+## P1 首批：表单填写与审批提交（2026-11-26）
+
+- `browser_snapshot()`：先通过 `browser_open` 打开页面，再读取可操作表单元素的 `ref`、`role`、`name`、`value`、`form_url` 和最新页面快照。只返回受支持的文本框与提交按钮；不返回隐藏字段、密码框、只读或禁用字段的可操作引用。最多 80 项；正文、链接、元素组合结果受工具预算限制，省略时标记 `truncated=true`。
+- `browser_act(snapshot, url, actions)`：引用最新快照及准确 URL，`fill` 替换文本，`type` 追加文本，`click` 点击提交按钮。一个批次最多 8 个动作，必须属于同一表单，提交点击只能有一个且位于最后。每项输入最多 1000 个码点、整批最多 2000 个码点；还要满足网页自身的 `maxlength` 和表单有效性要求。
+- 全部参数在输入前检查，批准后执行固定参数；新 Attempt 仅能续接同一 Run、同一快照的已批准动作。页面正文、链接、表单属性或已有值发生变化时返回 `browser_page_changed`，原动作保持失败审计，由模型重新观察并申请新审批。`browser_action_unsupported` 表示执行前拒绝，不能把不支持的操作不断换参数重试。
+- 正常填写和提交显示在真实 Chromium。沿用原版 ask 卡片、`threads.answer`、Activity 和工具台账。输入文本及 URL 会进入审批详情和审计，因此此通道只用于普通公开检索信息，不接收账号、密码等凭据。
+- 取消、租约失效、成员/表单授权撤销或人工接管均阻断后续步骤。动作发出后异常/断线保留 `dispatched` 状态；崩溃恢复返回 `effect_uncertain`，不重放可能已经提交的表单。
+
+在既有浏览器 JSON 中，**另加一条精确域名的 `forms: true` 授权**。下面第二条只作配置示例，需替换为实际允许的网站；不自动改写本机策略或授权所有用户：
+
+```json
+{
+  "grants": [
+    {
+      "tenant_id": "local",
+      "space_id": "development",
+      "users": ["admin"],
+      "origins": ["*"]
+    },
+    {
+      "tenant_id": "local",
+      "space_id": "development",
+      "users": ["admin"],
+      "origins": ["https://search.example.com"],
+      "forms": true
+    }
+  ]
+}
+```
+
+`forms: true` 不允许 `origins: ["*"]`；缺少字段默认只读。新 RPC Run 冻结 `browser_form_origins` 并将 `browser_act@1` 纳入审批；历史 Run 保持空。可用工具上限仍为 16：先保留现有联网、Python、文件与视觉能力，剩余至少 2 项时才加入表单工具；满额时不挤占已有能力。部署时需按任务取舍已开启工具，不能把空工具目录解释成表单已授权可用。无需迁移，不新增前端代码或 Node.js 后台。
+
+支持 HTML `input` 的 text/search/hidden/submit、textarea 和 submit button。为保持确定性，含其他控件、外部关联字段、跨域 action、POST 或非 UTF-8 编码的表单不开放操作；带按钮级提交覆盖属性的按钮不提供可操作引用。提交保留正常浏览器的重复字段、隐藏字段、只读字段及提交按钮值，禁用字段不提交。固定 CDP 驱动只执行平台自带程序，模型不能传任意 JavaScript。
+
+与 Rakazo 的对应关系：`packages/adapters/src/browser-tools.ts` 提供最多 24 个 click/fill/type/fill_secret，`page-browser-session.ts` 驱动页面引用并限制 secret 的来源。当前 Python 工具已有相同的引用式观察/操作流程；缺少 JavaScript 网站、保存登录信息、`fill_secret`、持久登录态、通用业务提交及结果核对，不能将本批表单能力标记为整个 P1 完成。
+
 ## 执行边界和当前差异
 
 - 仅匿名、无登录凭据的 HTML GET。Supervisor 逐次解析 DNS，拒绝私网、回环和链路本地地址，固定已解析 IP 并校验原网站 TLS；不使用环境代理，不转发 Cookie / Authorization / Set-Cookie。重定向仍检查范围，最多处理 5 次文档请求。
@@ -57,11 +93,11 @@ Docker 交付：将 JSON 放到交付目录的 `config/browser.json`；在 `.env
 - 每份 HTML 最多 1 MiB；单页最多索引 200000 个 Unicode 码点和 480 个链接，超出时返回 `truncated=true`。达到末尾后下一段位置为 null。链接位置按页面原始列表计数，被授权策略过滤的链接可能使某一段不足 12 条。浏览器步骤有时间上限；冷启动电脑可能需要更久。网页文字是不可信资料，不授予额外权限。
 - 每个步骤核对成员权限、Run 取消状态、当前 Attempt、有效租约、电脑 generation 和部署授权。用户接管时工具报 `browser_busy`；Agent 操作期间接管/停机请求明确报冲突，操作完成后即可接管。尚不支持强制抢占正在执行的 CDP 动作。
 - 每台电脑同一时间只有一个 Agent 浏览器步骤。Supervisor 当前串行处理桌面命令；其他桌面请求可能排队。本次电脑画面授权使用该步骤的缓存绑定，避免被同一操作阻塞。
-- 访客页面状态保存在 Supervisor 内存中；重启或挂起后需重新打开。无登录态持久化、表单输入、下载、发送消息或交易动作；这些需要后续实现操作策略和未知结果恢复。
+- 访客页面状态保存在 Supervisor 内存中；重启或挂起后需重新打开。仅上节显式授权的匿名 GET 表单可以填写和提交；无登录态持久化、下载、发送消息或交易动作，通用业务操作仍需后续实现策略与结果核对。
 
 真实模型联调与原版画面、接管、隔离验收见 [P0 记录](p0-acceptance.md)。启用 browser_reading 的 Run 遇到 browser_page_changed 时，Harness 保留失败工具记录并把固定错误提示返回模型，由新的 observe 调用恢复；不会自动重放原动作。授权拒绝、占用、取消与轮次限制不会被这项恢复绕过。
 
-错误码包括 `browser_not_allowed`、`browser_busy`、`browser_page_changed`、`browser_unavailable`、`browser_failed`。不向模型或 UI 返回底层凭据或原始异常。
+错误码包括 `browser_not_allowed`、`browser_busy`、`browser_page_changed`、`browser_action_unsupported`、`browser_unavailable`、`browser_failed`。不向模型或 UI 返回底层凭据或原始异常。
 
 新动作必须携带最新快照，旧快照不能继续驱动操作。正文或链接变化会报 `browser_page_changed`；可用 `browser_observe` 重新观察当前页后重试，无需假装旧内容仍然有效。
 
@@ -80,3 +116,17 @@ DOCKER_CONTEXT=colima uv run python tests/interop/browser_reading_smoke.py --ima
 ```
 
 目标 Ubuntu 与真实模型选择工具的效果仍需部署验收。
+
+### 表单增量验收
+
+`tests/test_browser_forms.py` 覆盖 Worker → 原版 RPC 审批 → API → Supervisor 接口，包括批准后新 Attempt、参数防替换、未批准拒绝、拒绝/取消/接管、执行中撤权、旧快照和跨用户隔离、未知动作崩溃恢复不重放，以及工具预算不挤占已有文件能力。
+
+真实 Chromium 通过 10 项确定性检查：支持元素筛选、整批执行前拒绝、审批跨 Attempt 续接、可见中文/emoji 填写和追加、原生 GET 序列化、手动修改后的失效与重新观察、maxlength、跨 Run 访客隔离、同名字段防属性遮蔽，以及回调撤权。脚本使用测试代码提供 HTML，网络/凭据边界由生产代理和离线用例另外验证，不把它算作真实模型、公开网站或原版 Web 页面验收。
+
+```sh
+DOCKER_CONTEXT=colima uv run --locked --offline python tests/interop/browser_forms_smoke.py --image agentforge/desktop-preview:acceptance --output /tmp/agentforge-forms-check
+```
+
+本机证据：`/tmp/agentforge-forms-20261126/result.json`、`filled.png`、`submitted.png`。这些是临时验收文件，不进入仓库。公共 JavaScript 网站、保存登录态和真实模型自主选择本批表单工具仍待下一批验收。
+
+2026-11-26 最终回归：SQLite 全套 934 项通过、5 项 PostgreSQL 专用测试跳过；独立 PostgreSQL 17.11 全套 939 项通过，两种模式均启用原版 Rakazo 客户端互操作。新增表单用例 26 项；Ruff 检查与 253 个 Python 文件格式检查通过。测试 schema 残留为 0，未连接或迁移开发数据库。
